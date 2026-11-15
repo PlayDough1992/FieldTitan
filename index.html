@@ -2043,11 +2043,14 @@
                 estimates: Array.isArray(parsedRaw.estimates) ? parsedRaw.estimates : [],
                 jobs: Array.isArray(parsedRaw.jobs) ? parsedRaw.jobs : [],
                 invoices: Array.isArray(parsedRaw.invoices) ? parsedRaw.invoices : [],
-                payments: Array.isArray(parsedRaw.payments) ? parsedRaw.payments : []
+                payments: Array.isArray(parsedRaw.payments) ? parsedRaw.payments : [],
+                users: Array.isArray(parsedRaw.users) ? parsedRaw.users : (state.users || [])
               };
               ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
               saveAppState(true);
               applyTheme();
+              syncCurrentUserSession();
+              migrateAndLinkJobAssignments();
               updateSyncBadge('synced', `Pulled & Decrypted ${ghSyncState.lastSyncedAt}`);
               if (!silent) notify('Database pulled and decrypted from public DATA.json on GitHub!');
               renderCurrentView();
@@ -2091,7 +2094,8 @@
           estimates: Array.isArray(parsed.estimates) ? parsed.estimates : [],
           jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
           invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
-          payments: Array.isArray(parsed.payments) ? parsed.payments : []
+          payments: Array.isArray(parsed.payments) ? parsed.payments : [],
+          users: Array.isArray(parsed.users) ? parsed.users : (state.users || [])
         };
 
         ghConfig.lastSha = fileObj.sha || '';
@@ -2100,6 +2104,8 @@
         saveGhConfig();
         saveAppState(true); // Save locally without triggering auto-push loop
         applyTheme();
+        syncCurrentUserSession();
+        migrateAndLinkJobAssignments();
         updateSyncBadge('synced', `Pulled & Decrypted ${ghSyncState.lastSyncedAt}`);
         if (!silent) notify('Database pulled and decrypted from DATA.json on GitHub!');
         renderCurrentView();
@@ -2329,7 +2335,8 @@
         estimates: Array.isArray(parsed.estimates) ? parsed.estimates : [],
         jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
         invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
-        payments: Array.isArray(parsed.payments) ? parsed.payments : []
+        payments: Array.isArray(parsed.payments) ? parsed.payments : [],
+        users: Array.isArray(parsed.users) ? parsed.users : (state.users || [])
       };
 
       if (serializedOld === JSON.stringify(incomingState)) {
@@ -2350,6 +2357,8 @@
       saveGhConfig();
       saveAppState(true); // Persist locally without triggering auto-push loop
       applyTheme();
+      syncCurrentUserSession();
+      migrateAndLinkJobAssignments();
       updateSyncBadge('synced', `Live ${ghSyncState.lastSyncedAt}`);
 
       // Check if technician is actively editing a form or text field in a drawer
@@ -2515,7 +2524,7 @@
 
       // Check if current hour is 7am or later, and today's alert hasn't fired yet
       if (lastAlertDate !== todayStr && now.getHours() >= 7) {
-        const todaysJobs = state.jobs.filter(j =>
+        const todaysJobs = getFilteredJobsForUser().filter(j =>
           j.date === todayStr &&
           j.status !== 'Completed' &&
           j.status !== 'Cancelled' &&
@@ -2957,6 +2966,53 @@
       currentUser = null;
       localStorage.removeItem(SESSION_STORAGE_KEY);
       sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+
+    function syncCurrentUserSession() {
+      if (!currentUser) return;
+      const activeUsers = Array.isArray(state.users) ? state.users : [];
+      if (activeUsers.length === 0) return;
+
+      const latest = activeUsers.find(u => u.id === currentUser.id) ||
+                     activeUsers.find(u => u.email && currentUser.email && u.email.toLowerCase() === currentUser.email.toLowerCase());
+
+      if (latest) {
+        if (latest.status === 'disabled') {
+          logoutUser();
+          notify('Your account has been deactivated by the administrator.', 'error');
+          return;
+        }
+
+        currentUser = {
+          ...currentUser,
+          ...latest,
+          permissions: { ...(currentUser.permissions || {}), ...(latest.permissions || {}) }
+        };
+        saveActiveSession(currentUser);
+        updateUserSessionUI();
+      }
+    }
+
+    function migrateAndLinkJobAssignments() {
+      if (!Array.isArray(state.jobs) || !Array.isArray(state.users) || state.users.length === 0) return;
+      let modified = false;
+      state.jobs.forEach(job => {
+        if (!job.assignedTechId && job.assignedTech) {
+          const matchName = job.assignedTech.trim().toLowerCase();
+          const matchingUsers = state.users.filter(u => (u.name || '').trim().toLowerCase() === matchName);
+          if (matchingUsers.length === 1) {
+            job.assignedTechId = matchingUsers[0].id;
+            modified = true;
+          } else if (matchingUsers.length > 1) {
+            const techMatch = matchingUsers.find(u => u.role === 'tech');
+            job.assignedTechId = techMatch ? techMatch.id : matchingUsers[0].id;
+            modified = true;
+          }
+        }
+      });
+      if (modified) {
+        saveAppState(true);
+      }
     }
 
     function logoutUser() {
@@ -3462,14 +3518,30 @@
     }
 
     function getFilteredJobsForUser() {
-      if (currentUser && currentUser.role === 'tech' && !currentUser.permissions?.canViewAllJobs) {
-        const myName = (currentUser.name || '').toLowerCase();
-        return state.jobs.filter(j =>
-          (j.assignedTech && j.assignedTech.toLowerCase() === myName) ||
-          (j.assignedTechId && j.assignedTechId === currentUser.id)
-        );
-      }
-      return state.jobs;
+      if (!currentUser) return state.jobs;
+      if (currentUser.role === 'admin') return state.jobs;
+
+      const canViewAll = currentUser.permissions && (
+        currentUser.permissions.canViewAllJobs === true ||
+        currentUser.permissions.canViewAllJobs === 'true'
+      );
+      if (canViewAll) return state.jobs;
+
+      const myId = String(currentUser.id || '').trim();
+      const myName = String(currentUser.name || '').toLowerCase().trim();
+
+      return state.jobs.filter(j => {
+        const jTechId = String(j.assignedTechId || '').trim();
+        const jTech = String(j.assignedTech || '').toLowerCase().trim();
+
+        if (myId && jTechId) {
+          return jTechId === myId;
+        }
+        if (jTechId && jTechId !== myId) {
+          return false;
+        }
+        return Boolean(myName && jTech && jTech === myName);
+      });
     }
 
     /* ==========================================================================
@@ -4154,7 +4226,7 @@
       const c = getCustomer(customerId);
       if (!c) return;
       const units = state.equipment.filter(e => e.customerId === customerId);
-      const jobs = state.jobs.filter(j => j.customerId === customerId);
+      const jobs = getFilteredJobsForUser().filter(j => j.customerId === customerId);
       const onMyWayBody = encodeURIComponent(`Hi ${c.name}, this is ${state.settings.companyName || 'your technician'}. I am on my way to your property now!`);
 
       const body = `
@@ -4472,6 +4544,7 @@
         timeWindow: '08:00 AM - 10:00 AM',
         priority: 'Normal',
         status: 'Scheduled',
+        assignedTechId: '',
         assignedTech: '',
         notes: '',
         checklist: [],
@@ -4531,15 +4604,20 @@
             </div>
             <div class="form-group">
               <label class="form-label">Assigned Tech</label>
-              <select name="assignedTech" class="form-control">
+              <select name="assignedTechId" id="job-assigned-tech-id" class="form-control" onchange="onJobAssignedTechChange(this)">
                 <option value="">-- Unassigned --</option>
-                ${(state.users || []).filter(u => u.status !== 'disabled').map(u => `
-                  <option value="${esc(u.name)}" ${data.assignedTech === u.name ? 'selected' : ''}>
-                    ${esc(u.name)} (${u.role === 'admin' ? 'Admin' : 'Tech'}${u.dutyStatus === 'off_duty' ? ' - Off Duty' : ' - On Duty'})
-                  </option>
-                `).join('')}
-                ${data.assignedTech && !(state.users || []).some(u => u.name === data.assignedTech) ? `<option value="${esc(data.assignedTech)}" selected>${esc(data.assignedTech)} (Custom)</option>` : ''}
+                ${(state.users || []).filter(u => u.status !== 'disabled').map(u => {
+                  const isSel = (data.assignedTechId && data.assignedTechId === u.id) ||
+                                (!data.assignedTechId && data.assignedTech && data.assignedTech.toLowerCase() === u.name.toLowerCase() && (u.role === 'tech' || (state.users || []).filter(x => x.name.toLowerCase() === u.name.toLowerCase()).length === 1));
+                  return `
+                    <option value="${u.id}" data-name="${esc(u.name)}" ${isSel ? 'selected' : ''}>
+                      ${esc(u.name)} (${u.role === 'admin' ? 'Admin' : 'Tech'}${u.dutyStatus === 'off_duty' ? ' - Off Duty' : ' - On Duty'}) [${esc(u.email)}]
+                    </option>
+                  `;
+                }).join('')}
+                ${data.assignedTech && !(state.users || []).some(u => u.name.toLowerCase() === data.assignedTech.toLowerCase() || u.id === data.assignedTechId) ? `<option value="" data-name="${esc(data.assignedTech)}" selected>${esc(data.assignedTech)} (Custom)</option>` : ''}
               </select>
+              <input type="hidden" name="assignedTech" id="job-assigned-tech-name" value="${esc(data.assignedTech || '')}" />
             </div>
           </div>
 
@@ -4561,10 +4639,23 @@
       renderDraftLineItems();
     }
 
+    function onJobAssignedTechChange(selectEl) {
+      const opt = selectEl.options[selectEl.selectedIndex];
+      const nameInput = document.getElementById('job-assigned-tech-name');
+      if (nameInput) {
+        nameInput.value = opt ? (opt.getAttribute('data-name') || '') : '';
+      }
+    }
+
     function saveJobForm(existingId) {
       const form = document.getElementById('job-form');
       if (!form.reportValidity()) return;
       const fd = new FormData(form);
+      const techSelect = form.querySelector('[name="assignedTechId"]');
+      const selOpt = techSelect?.selectedOptions?.[0];
+      const assignedTechId = (fd.get('assignedTechId') || '').trim();
+      const assignedTech = (selOpt?.getAttribute('data-name') || fd.get('assignedTech') || '').trim();
+
       const payload = {
         number: fd.get('number').trim(),
         customerId: fd.get('customerId'),
@@ -4573,7 +4664,8 @@
         date: fd.get('date'),
         timeWindow: fd.get('timeWindow').trim(),
         priority: fd.get('priority'),
-        assignedTech: fd.get('assignedTech').trim(),
+        assignedTechId,
+        assignedTech,
         notes: fd.get('notes').trim(),
         items: window._draftItems || []
       };
@@ -5387,7 +5479,8 @@
         timeWindow: '09:00 AM - 12:00 PM',
         priority: 'Normal',
         status: 'Scheduled',
-        assignedTech: '',
+        assignedTech: currentUser && currentUser.role === 'tech' ? currentUser.name : '',
+        assignedTechId: currentUser && currentUser.role === 'tech' ? currentUser.id : '',
         notes: `Converted from ${est.number}. ${est.notes || ''}`.trim(),
         checklist: [],
         photos: [],
@@ -6772,6 +6865,12 @@
         u.status = status;
         u.permissions = { canViewAllJobs, canCreateJobs, canEditPrices, canCollectPayments };
 
+        if (currentUser && currentUser.id === id) {
+          currentUser = { ...currentUser, ...u };
+          saveActiveSession(currentUser);
+          updateUserSessionUI();
+        }
+
         if (password && password.trim().length >= 6) {
           u.salt = bytesToHex(window.crypto.getRandomValues(new Uint8Array(16)));
           u.passwordHash = await hashUserPassword(password.trim(), u.salt);
@@ -7198,6 +7297,8 @@
 
       // Check Active User Session
       currentUser = loadActiveSession();
+      syncCurrentUserSession();
+      migrateAndLinkJobAssignments();
 
       if (currentUser) {
         updateUserSessionUI();
@@ -7245,6 +7346,8 @@
 
       if (ghConfig.autoPull && isGhConfigured()) {
         await pullDatabaseFromGitHub(true);
+        syncCurrentUserSession();
+        migrateAndLinkJobAssignments();
       }
 
       // Start Real-Time Live Sync Engine (polls every 10s & auto-updates tech UI)
