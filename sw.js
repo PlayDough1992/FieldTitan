@@ -1,5 +1,5 @@
 // FieldTitan Offline-First PWA Service Worker
-const CACHE_NAME = 'fieldtitan-cache-v3';
+const CACHE_NAME = 'fieldtitan-cache-v4';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -55,5 +55,22 @@ self.addEventListener('fetch', (event) => {
   // Cache first for static assets (icons, manifest)
   event.respondWith(
     caches.match(req).then((cached) => cached || fetch(req))
+  );
+});
+
+// Native Notification Click Handler: Focuses or opens FieldTitan on tap
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow('./index.html');
+      }
+    })
   );
 });

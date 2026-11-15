@@ -939,7 +939,9 @@
         zelleHandle: '',
         cashAppHandle: '',
         theme: 'light',
-        autoFullscreen: false
+        autoFullscreen: false,
+        notifyMorningDispatch: true,
+        notifyLiveSync: true
       },
       customers: [],   // Strictly empty []
       equipment: [],   // Strictly empty []
@@ -1610,6 +1612,16 @@
         setTimeout(() => { if (dot) dot.style.transform = 'scale(1)'; }, 600);
       }
       notify('⚡ Live sync: Schedule & team updates received!', 'info');
+
+      // Native notification & chime for Real-Time Team Auto-Sync
+      if (state.settings.notifyLiveSync !== false) {
+        showNativeNotification('⚡ FieldTitan: Schedule Updated', {
+          body: 'New jobs or schedule changes synced from your team in real time.',
+          tag: 'ft-live-sync',
+          chime: 'sync',
+          renotify: true
+        });
+      }
     }
 
     function startLiveSyncEngine() {
@@ -1626,6 +1638,214 @@
           checkRemoteChangesAndAutoUpdate();
         }
       }, 10000);
+    }
+
+    /* ==========================================================================
+       NATIVE NOTIFICATIONS, DISPATCH CHIMES & 7:00 AM DAILY ALERT SCHEDULER
+       ========================================================================== */
+    let audioCtx = null;
+
+    function getAudioContext() {
+      if (!audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          audioCtx = new AudioContextClass();
+        }
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      return audioCtx;
+    }
+
+    function playDispatchChime(type = 'morning') {
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+
+        const now = ctx.currentTime;
+        if (type === 'morning') {
+          // 4-tone bright ascending marimba dispatch ringtone: D5, F#5, A5, D6
+          const notes = [
+            { f: 587.33, t: now },
+            { f: 739.99, t: now + 0.14 },
+            { f: 880.00, t: now + 0.28 },
+            { f: 1174.66, t: now + 0.44 }
+          ];
+          notes.forEach(({ f, t }) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(f, t);
+
+            gain.gain.setValueAtTime(0, t);
+            gain.gain.linearRampToValueAtTime(0.35, t + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start(t);
+            osc.stop(t + 0.6);
+          });
+        } else {
+          // Quick subtle 2-tone real-time sync chime: A5 -> C#6
+          const notes = [
+            { f: 880.00, t: now },
+            { f: 1108.73, t: now + 0.10 }
+          ];
+          notes.forEach(({ f, t }) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(f, t);
+
+            gain.gain.setValueAtTime(0, t);
+            gain.gain.linearRampToValueAtTime(0.2, t + 0.015);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start(t);
+            osc.stop(t + 0.35);
+          });
+        }
+      } catch (err) {
+        console.warn('Audio chime playback:', err);
+      }
+    }
+
+    async function showNativeNotification(title, options = {}) {
+      if (options.chime) {
+        playDispatchChime(options.chime);
+      }
+
+      if (!('Notification' in window) || Notification.permission !== 'granted') {
+        return;
+      }
+
+      const defaultOptions = {
+        icon: './icon-192.png',
+        badge: './icon-192.png',
+        vibrate: [250, 120, 250],
+        ...options
+      };
+
+      try {
+        if ('serviceWorker' in navigator) {
+          const reg = await navigator.serviceWorker.ready;
+          if (reg && reg.showNotification) {
+            await reg.showNotification(title, defaultOptions);
+            return;
+          }
+        }
+        new Notification(title, defaultOptions);
+      } catch (err) {
+        try {
+          new Notification(title, defaultOptions);
+        } catch (e) {
+          console.warn('Native notification fallback:', e);
+        }
+      }
+    }
+
+    function checkMorningDispatchAlert() {
+      if (state.settings.notifyMorningDispatch === false) return;
+
+      const now = new Date();
+      const todayStr = todayISO();
+      const lastAlertDate = localStorage.getItem('ft_last_morning_alert');
+
+      // Check if current hour is 7am or later, and today's alert hasn't fired yet
+      if (lastAlertDate !== todayStr && now.getHours() >= 7) {
+        const todaysJobs = state.jobs.filter(j =>
+          j.date === todayStr &&
+          j.status !== 'Completed' &&
+          j.status !== 'Cancelled' &&
+          j.status !== 'Invoiced'
+        );
+
+        if (todaysJobs.length > 0) {
+          localStorage.setItem('ft_last_morning_alert', todayStr);
+          showNativeNotification(`📋 Daily Dispatch: ${todaysJobs.length} Job${todaysJobs.length === 1 ? '' : 's'} Today`, {
+            body: `Good morning! You have ${todaysJobs.length} active service call${todaysJobs.length === 1 ? '' : 's'} scheduled for today.`,
+            tag: 'ft-morning-dispatch',
+            chime: 'morning',
+            renotify: true
+          });
+          notify(`📋 7:00 AM Dispatch: ${todaysJobs.length} active job(s) scheduled for today!`, 'info');
+        }
+      }
+    }
+
+    function initMorningDispatchScheduler() {
+      // Check immediately on startup in case device opened after 7am
+      checkMorningDispatchAlert();
+
+      // Calculate time until next 7:00 AM
+      const now = new Date();
+      const next7 = new Date();
+      next7.setHours(7, 0, 0, 0);
+      if (now.getTime() >= next7.getTime()) {
+        next7.setDate(next7.getDate() + 1);
+      }
+      const msUntil7Am = next7.getTime() - now.getTime();
+
+      setTimeout(() => {
+        checkMorningDispatchAlert();
+        // Once 7am hits, repeat every 24 hours
+        setInterval(checkMorningDispatchAlert, 24 * 60 * 60 * 1000);
+      }, msUntil7Am);
+    }
+
+    async function requestNotificationPermission() {
+      if (!('Notification' in window)) {
+        notify('Native notifications are not supported in this browser.', 'error');
+        return;
+      }
+      try {
+        const perm = await Notification.requestPermission();
+        updateNotificationStatusUI();
+        if (perm === 'granted') {
+          playDispatchChime('morning');
+          showNativeNotification('🔔 Notifications Enabled!', {
+            body: 'You will receive 7:00 AM daily job dispatch rings and real-time team sync alerts.',
+            tag: 'ft-enabled',
+            chime: 'morning'
+          });
+          notify('Notifications & dispatch chimes enabled successfully!', 'success');
+        } else if (perm === 'denied') {
+          notify('Notification permission was blocked in browser settings.', 'warning');
+        }
+      } catch (err) {
+        console.warn('Request notification permission error:', err);
+      }
+    }
+
+    function updateNotificationStatusUI() {
+      const el = document.getElementById('notification-permission-status');
+      if (el && 'Notification' in window) {
+        const statusMap = {
+          granted: '<span style="color:var(--success);">✅ Enabled & Active</span>',
+          denied: '<span style="color:var(--danger);">❌ Blocked in browser settings</span>',
+          default: '<span style="color:var(--warning);">⚠️ Needs Permission (Tap button above)</span>'
+        };
+        el.innerHTML = `Permission Status: <strong>${statusMap[Notification.permission] || Notification.permission}</strong>`;
+      }
+      const btn = document.getElementById('btn-request-notifications');
+      if (btn && 'Notification' in window) {
+        if (Notification.permission === 'granted') {
+          btn.innerHTML = '🔔 Notifications Enabled';
+          btn.className = 'btn btn-success btn-sm';
+        }
+      }
+    }
+
+    function toggleNotificationPref(key, value) {
+      state.settings[key] = Boolean(value);
+      saveAppState(true);
+      notify(value ? 'Notification alert enabled.' : 'Notification alert disabled.');
     }
 
     function uid(prefix = 'id') {
@@ -4580,6 +4800,42 @@
             </div>
           </div>
 
+          <!-- Native Notifications & Dispatch Chimes -->
+          <div class="card" style="border-left: 4px solid var(--success);">
+            <div class="card-header">
+              <div class="card-title">🔔 Native Notifications & Morning Dispatch Ring</div>
+            </div>
+            <p style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:12px;">
+              Get native mobile alerts and audible chimes when jobs are scheduled each morning at 7:00 AM, and when your team syncs changes in real time.
+            </p>
+            <div style="display:flex; flex-direction:column; gap:12px;">
+              <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <button type="button" onclick="requestNotificationPermission()" class="btn btn-primary btn-sm" id="btn-request-notifications">
+                  🔔 Enable Native Notifications
+                </button>
+                <button type="button" onclick="playDispatchChime('morning')" class="btn btn-secondary btn-sm">
+                  🔊 Test 7 AM Dispatch Ring
+                </button>
+                <button type="button" onclick="playDispatchChime('sync')" class="btn btn-secondary btn-sm">
+                  🔊 Test Live Sync Chime
+                </button>
+              </div>
+              <div style="font-size:0.8rem; font-weight:700; color:var(--text-muted);" id="notification-permission-status">
+                Permission Status: <strong>Checking...</strong>
+              </div>
+              <div class="grid-2" style="row-gap:8px;">
+                <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:700; cursor:pointer;">
+                  <input type="checkbox" name="notifyMorningDispatch" onchange="toggleNotificationPref('notifyMorningDispatch', this.checked)" ${state.settings.notifyMorningDispatch !== false ? 'checked' : ''} style="width:18px; height:18px;" />
+                  Ring Daily at 7:00 AM if jobs are scheduled
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:700; cursor:pointer;">
+                  <input type="checkbox" name="notifyLiveSync" onchange="toggleNotificationPref('notifyLiveSync', this.checked)" ${state.settings.notifyLiveSync !== false ? 'checked' : ''} style="width:18px; height:18px;" />
+                  Ring & Notify on Real-Time Team Auto-Sync
+                </label>
+              </div>
+            </div>
+          </div>
+
           <!-- Data Backup & Accounting Export -->
           <div class="card">
             <div class="card-header">
@@ -4997,6 +5253,10 @@
 
       // Start Real-Time Live Sync Engine (polls every 10s & auto-updates tech UI)
       startLiveSyncEngine();
+
+      // Initialize 7:00 AM Morning Dispatch Alert Scheduler & Notification UI
+      initMorningDispatchScheduler();
+      updateNotificationStatusUI();
 
       // Adaptive Real-Time Watchers: checks instantly on tab focus, phone wake-up & network reconnect
       document.addEventListener('visibilitychange', () => {
