@@ -1082,14 +1082,24 @@
     /* ==========================================================================
        1C. GITHUB CONTENTS API (READ & WRITE ENCRYPTED DATA.json IN REPOSITORY)
        ========================================================================== */
-    function isGhConfigured() {
+    function isGhPullReady() {
       return Boolean(
         (ghConfig.owner || '').trim() &&
         (ghConfig.repo || '').trim() &&
         (ghConfig.path || '').trim() &&
-        (ghConfig.token || '').trim() &&
         (ghConfig.encryptionKey || '').trim()
       );
+    }
+
+    function isGhPushReady() {
+      return Boolean(
+        isGhPullReady() &&
+        (ghConfig.token || '').trim()
+      );
+    }
+
+    function isGhConfigured() {
+      return isGhPullReady();
     }
 
     function updateSyncBadge(status, message = '') {
@@ -1099,9 +1109,9 @@
       const label = document.getElementById('gh-sync-label');
       if (!dot || !label) return;
 
-      if (!isGhConfigured() || status === 'local') {
+      if (!isGhPullReady() || status === 'local') {
         dot.style.background = 'var(--text-muted)';
-        if (ghConfig.token && !(ghConfig.encryptionKey || '').trim()) {
+        if (!(ghConfig.encryptionKey || '').trim()) {
           label.textContent = 'Key Required';
         } else {
           label.textContent = 'Local Only';
@@ -1117,7 +1127,7 @@
         label.textContent = 'Sync Error';
       } else {
         dot.style.background = 'var(--brand-primary)';
-        label.textContent = 'GitHub Ready';
+        label.textContent = isGhPushReady() ? 'GitHub Ready' : 'Public Pull Ready';
       }
     }
 
@@ -1140,12 +1150,12 @@
     }
 
     async function pullDatabaseFromGitHub(silent = false) {
-      if (!isGhConfigured()) {
+      if (!isGhPullReady()) {
         if (!silent) {
           if (!ghConfig.encryptionKey || !ghConfig.encryptionKey.trim()) {
             notify('Enter Encryption Passphrase in Settings to decrypt DATA.json.', 'error');
           } else {
-            notify('Enter GitHub Owner, Repo, File Path, Token, and Encryption Passphrase first.', 'error');
+            notify('Enter GitHub Owner, Repo, and Encryption Passphrase first.', 'error');
           }
         }
         return false;
@@ -1153,17 +1163,55 @@
 
       updateSyncBadge('syncing');
       try {
+        const headers = {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        };
+        if ((ghConfig.token || '').trim()) {
+          headers['Authorization'] = `Bearer ${ghConfig.token.trim()}`;
+        }
+
         const res = await fetch(buildGitHubContentsUrl(true), {
           method: 'GET',
           cache: 'no-store',
-          headers: {
-            'Authorization': `Bearer ${ghConfig.token.trim()}`,
-            'Accept': 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28'
-          }
+          headers
         });
 
         if (!res.ok) {
+          // Seamless fallback: fetch raw content directly from GitHub without API rate-limit
+          const rawUrl = `https://raw.githubusercontent.com/${encodeURIComponent((ghConfig.owner || '').trim())}/${encodeURIComponent((ghConfig.repo || '').trim())}/${encodeURIComponent((ghConfig.branch || 'main').trim())}/${(ghConfig.path || 'DATA.json').trim().replace(/^\/+/, '')}?_t=${Date.now()}`;
+          const rawRes = await fetch(rawUrl, { cache: 'no-store' }).catch(() => null);
+          if (rawRes && rawRes.ok) {
+            const rawContent = (await rawRes.text()).trim();
+            if (!rawContent || rawContent === '{}') {
+              updateSyncBadge('synced', 'Remote file empty');
+              if (!silent) notify('Remote DATA.json is empty. Save or push your encrypted database.');
+              return true;
+            }
+            const parsedRaw = await decryptDatabasePayload(rawContent, ghConfig.encryptionKey.trim());
+            if (parsedRaw && Array.isArray(parsedRaw.customers)) {
+              state = {
+                ...BLANK_STATE,
+                ...parsedRaw,
+                settings: { ...BLANK_STATE.settings, ...(parsedRaw.settings || {}) },
+                customers: Array.isArray(parsedRaw.customers) ? parsedRaw.customers : [],
+                equipment: Array.isArray(parsedRaw.equipment) ? parsedRaw.equipment : [],
+                pricebook: Array.isArray(parsedRaw.pricebook) ? parsedRaw.pricebook : [],
+                estimates: Array.isArray(parsedRaw.estimates) ? parsedRaw.estimates : [],
+                jobs: Array.isArray(parsedRaw.jobs) ? parsedRaw.jobs : [],
+                invoices: Array.isArray(parsedRaw.invoices) ? parsedRaw.invoices : [],
+                payments: Array.isArray(parsedRaw.payments) ? parsedRaw.payments : []
+              };
+              ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
+              saveAppState(true);
+              applyTheme();
+              updateSyncBadge('synced', `Pulled & Decrypted ${ghSyncState.lastSyncedAt}`);
+              if (!silent) notify('Database pulled and decrypted from public DATA.json on GitHub!');
+              renderCurrentView();
+              return true;
+            }
+          }
+
           const errJson = await res.json().catch(() => ({}));
           const detail = `HTTP ${res.status}: ${errJson.message || res.statusText}`;
           updateSyncBadge('error', detail);
@@ -1222,13 +1270,13 @@
     }
 
     async function pushDatabaseToGitHub(silent = false, initializeIfMissing = false) {
-      if (!isGhConfigured()) {
+      if (!isGhPullReady()) {
+        if (!silent) notify('Enter Encryption Passphrase in Settings first.', 'error');
+        return false;
+      }
+      if (!isGhPushReady()) {
         if (!silent) {
-          if (!ghConfig.encryptionKey || !ghConfig.encryptionKey.trim()) {
-            notify('Enter Encryption Passphrase in Settings before saving to DATA.json.', 'error');
-          } else {
-            notify('Enter GitHub Owner, Repo, File Path, Token, and Encryption Passphrase first.', 'error');
-          }
+          notify('GitHub API requires an Access Token to commit directly from the browser. To save without a token, use "Download Encrypted DATA.json" and commit with git.', 'error');
         }
         return false;
       }
@@ -1303,24 +1351,23 @@
     }
 
     async function testAndInitGitHubRepo() {
-      if (!isGhConfigured()) {
-        if (!ghConfig.encryptionKey || !ghConfig.encryptionKey.trim()) {
-          notify('Please enter an Encryption Passphrase to protect DATA.json.', 'error');
-        } else {
-          notify('Please fill in Owner, Repository, Branch, File Path, Fine-Grained PAT, and Encryption Passphrase.', 'error');
-        }
+      if (!isGhPullReady()) {
+        notify('Please enter Owner, Repository, and an Encryption Passphrase first.', 'error');
         return;
       }
       updateSyncBadge('syncing');
       try {
+        const headers = {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        };
+        if ((ghConfig.token || '').trim()) {
+          headers['Authorization'] = `Bearer ${ghConfig.token.trim()}`;
+        }
         const res = await fetch(buildGitHubContentsUrl(true), {
           method: 'GET',
           cache: 'no-store',
-          headers: {
-            'Authorization': `Bearer ${ghConfig.token.trim()}`,
-            'Accept': 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28'
-          }
+          headers
         });
 
         if (res.ok) {
@@ -1329,12 +1376,16 @@
           ghSyncState.lastSha = meta.sha || '';
           ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
           saveGhConfig();
-          updateSyncBadge('synced', 'Connected (file exists)');
-          notify('Connected! Remote DATA.json file found in repository.');
+          updateSyncBadge('synced', 'Connected (public file found)');
+          notify('Connected! Public DATA.json found in repository.');
           if (activeTab === 'settings') renderCurrentView();
         } else if (res.status === 404) {
-          notify('DATA.json file not found in repo — initializing encrypted file now...');
-          await pushDatabaseToGitHub(false, true);
+          if (isGhPushReady()) {
+            notify('DATA.json file not found in repo — initializing encrypted file now...');
+            await pushDatabaseToGitHub(false, true);
+          } else {
+            notify('DATA.json not found in repo yet. To initialize without a token, use "Download Encrypted DATA.json" and commit with git.', 'error');
+          }
         } else {
           const errJson = await res.json().catch(() => ({}));
           throw new Error(`HTTP ${res.status}: ${errJson.message || res.statusText}`);
@@ -3931,10 +3982,10 @@
               </div>
 
               <div class="form-group">
-                <label class="form-label">Fine-Grained Personal Access Token (PAT) *</label>
-                <input type="password" name="token" value="${esc(ghConfig.token)}" required class="form-control" placeholder="github_pat_..." />
+                <label class="form-label">Personal Access Token (PAT) <span style="font-weight:normal; color:var(--text-muted);">(Optional for Pull, Required for In-Browser Commit)</span></label>
+                <input type="password" name="token" value="${esc(ghConfig.token)}" class="form-control" placeholder="github_pat_... (optional for public repo)" />
                 <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
-                  Stored locally on this device only (never saved inside the repo JSON). Grant <strong>Contents: Read and write</strong> permission on this repository.
+                  Since this repository is public, <strong>no access token is needed to pull or decrypt DATA.json</strong>. A token is only required if you want this browser app to commit/push directly to GitHub.
                 </div>
               </div>
 
