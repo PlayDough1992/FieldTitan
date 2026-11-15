@@ -1465,7 +1465,16 @@
       jobs: [],        // Strictly empty []
       invoices: [],    // Strictly empty []
       payments: [],    // Strictly empty []
-      users: []        // Strictly empty [] (Admins & Technicians)
+      users: [],       // Strictly empty [] (Admins & Technicians)
+      companySync: {
+        token: '',
+        encryptionKey: '',
+        owner: 'PlayDough1992',
+        repo: 'FieldTitan',
+        branch: 'main',
+        path: 'DATA.json',
+        updatedAt: ''
+      }
     };
 
     // Stored strictly in device localStorage (never written inside DATA.json)
@@ -1702,10 +1711,55 @@
       return vault;
     }
 
+    function syncCompanyCredentialsFromDecryptedData(cs) {
+      if (!cs || typeof cs !== 'object') return;
+      let changed = false;
+      const remoteToken = (cs.token || '').trim();
+      const localToken = (ghConfig.token || '').trim();
+
+      if (remoteToken && remoteToken !== localToken) {
+        console.log('[FieldTitan Credentials] Auto-adopting updated company GitHub PAT token from encrypted cloud vault');
+        ghConfig.token = remoteToken;
+        changed = true;
+      }
+      if (cs.encryptionKey && cs.encryptionKey.trim() && cs.encryptionKey.trim() !== (ghConfig.encryptionKey || '').trim()) {
+        ghConfig.encryptionKey = cs.encryptionKey.trim();
+        changed = true;
+      }
+      if (cs.owner && cs.owner.trim() && cs.owner.trim() !== (ghConfig.owner || '').trim()) {
+        ghConfig.owner = cs.owner.trim();
+        changed = true;
+      }
+      if (cs.repo && cs.repo.trim() && cs.repo.trim() !== (ghConfig.repo || '').trim()) {
+        ghConfig.repo = cs.repo.trim();
+        changed = true;
+      }
+      if (cs.branch && cs.branch.trim() && cs.branch.trim() !== (ghConfig.branch || '').trim()) {
+        ghConfig.branch = cs.branch.trim();
+        changed = true;
+      }
+      if (changed) {
+        saveGhConfig();
+        updateSyncBadge(isGhPushReady() ? 'idle' : 'local', 'Cloud Credentials Synchronized');
+      }
+    }
+
     async function encryptDatabasePayload(plainObj, passphrase) {
       if (!passphrase || !passphrase.trim()) {
         throw new Error('Encryption Passphrase is required to encrypt DATA.json.');
       }
+
+      // Embed the latest company sync credentials inside the encrypted payload
+      plainObj.companySync = {
+        token: (ghConfig.token || '').trim(),
+        encryptionKey: (ghConfig.encryptionKey || passphrase || '').trim(),
+        owner: (ghConfig.owner || 'PlayDough1992').trim(),
+        repo: (ghConfig.repo || 'FieldTitan').trim(),
+        branch: (ghConfig.branch || 'main').trim(),
+        path: (ghConfig.path || 'DATA.json').trim(),
+        updatedAt: new Date().toISOString()
+      };
+
       const enc = new TextEncoder();
       const salt = window.crypto.getRandomValues(new Uint8Array(16));
       const iv = window.crypto.getRandomValues(new Uint8Array(12));
@@ -1759,6 +1813,12 @@
           );
           const decryptedText = new TextDecoder().decode(decryptedBuffer);
           const parsedData = JSON.parse(decryptedText);
+
+          // Automatically synchronize company credentials from cloud vault
+          if (parsedData && parsedData.companySync && parsedData.companySync.token) {
+            syncCompanyCredentialsFromDecryptedData(parsedData.companySync);
+          }
+
           return parsedData;
         } catch (decryptErr) {
           throw new Error('Decryption failed: Incorrect encryption passphrase or corrupt DATA.json.');
@@ -2353,6 +2413,15 @@
         ...remote,
         ...local,
         settings: { ...BLANK_STATE.settings, ...(remote.settings || {}), ...(local.settings || {}) },
+        companySync: {
+          token: (remote.companySync?.token || local.companySync?.token || ghConfig.token || '').trim(),
+          encryptionKey: (remote.companySync?.encryptionKey || local.companySync?.encryptionKey || ghConfig.encryptionKey || '').trim(),
+          owner: (remote.companySync?.owner || local.companySync?.owner || ghConfig.owner || 'PlayDough1992').trim(),
+          repo: (remote.companySync?.repo || local.companySync?.repo || ghConfig.repo || 'FieldTitan').trim(),
+          branch: (remote.companySync?.branch || local.companySync?.branch || ghConfig.branch || 'main').trim(),
+          path: (remote.companySync?.path || local.companySync?.path || ghConfig.path || 'DATA.json').trim(),
+          updatedAt: remote.companySync?.updatedAt || local.companySync?.updatedAt || new Date().toISOString()
+        },
         customers: mergeById(local.customers, remote.customers),
         equipment: mergeById(local.equipment, remote.equipment),
         pricebook: mergeById(local.pricebook, remote.pricebook),
@@ -2428,6 +2497,8 @@
           }
         } else if (headRes.status === 404) {
           currentSha = ''; // File does not exist yet; PUT will create it
+        } else if (headRes.status === 401) {
+          throw new Error('GitHub PAT token is invalid or expired (Bad credentials). Please update your token in Settings or Quick Sync.');
         } else {
           const errJson = await headRes.json().catch(() => ({}));
           throw new Error(`HTTP ${headRes.status}: ${errJson.message || headRes.statusText}`);
@@ -2458,6 +2529,9 @@
 
         if (!putRes.ok) {
           const errJson = await putRes.json().catch(() => ({}));
+          if (putRes.status === 401) {
+            throw new Error('GitHub PAT token is invalid or expired (Bad credentials). Please update your token in Settings or Quick Sync.');
+          }
           throw new Error(`HTTP ${putRes.status}: ${errJson.message || putRes.statusText}`);
         }
 
@@ -2472,7 +2546,8 @@
         if (activeTab === 'settings') renderCurrentView();
         return true;
       } catch (err) {
-        updateSyncBadge('error', err.message || 'GitHub API write error');
+        const isBadCreds = err.message && err.message.toLowerCase().includes('bad credentials');
+        updateSyncBadge('error', isBadCreds ? 'Bad Credentials (PAT expired)' : (err.message || 'GitHub API write error'));
         if (!silent) notify(`GitHub Sync Error: ${err.message}`, 'error');
         if (activeTab === 'settings') renderCurrentView();
         return false;
@@ -2520,6 +2595,8 @@
           } else {
             notify('DATA.json not found in repo yet. To initialize without a token, use "Download Encrypted DATA.json" and commit with git.', 'error');
           }
+        } else if (res.status === 401) {
+          throw new Error('HTTP 401: Bad credentials (GitHub PAT token is invalid or expired. Please update token in Settings or Quick Sync)');
         } else {
           const errJson = await res.json().catch(() => ({}));
           throw new Error(`HTTP ${res.status}: ${errJson.message || res.statusText}`);
@@ -2580,7 +2657,7 @@
           if (parsed && typeof parsed === 'object' && Array.isArray(parsed.customers)) {
             applyRemoteStateUpdate(parsed, remoteSha);
           }
-        } else if (res.status === 403 || res.status === 429) {
+        } else if (res.status === 401 || res.status === 403 || res.status === 429) {
           // Tokenless / fallback endpoint
           const rawUrl = `https://raw.githubusercontent.com/${encodeURIComponent((ghConfig.owner || '').trim())}/${encodeURIComponent((ghConfig.repo || '').trim())}/${encodeURIComponent((ghConfig.branch || 'main').trim())}/${(ghConfig.path || 'DATA.json').trim().replace(/^\/+/, '')}?_t=${Date.now()}`;
           const rawRes = await fetch(rawUrl, { cache: 'no-store' }).catch(() => null);
@@ -5591,9 +5668,20 @@ ${s.email ? 'Email: ' + s.email : ''}
 
           <div style="font-size:0.8rem; color:var(--text-secondary); background:var(--bg-subtle); padding:10px; border-radius:8px; border:1px solid var(--border-subtle);">
             <div><strong>Repository:</strong> ${esc(ghConfig.owner || 'PlayDough1992')}/${esc(ghConfig.repo || 'FieldTitan')} (${esc(ghConfig.branch || 'main')})</div>
-            <div style="margin-top:2px;"><strong>Push Access:</strong> ${ready ? '<span style="color:var(--success); font-weight:700;">✅ Ready (PAT Token Active)</span>' : '<span style="color:var(--danger); font-weight:700;">⚠️ Token Missing / Local Read Only</span>'}</div>
+            <div style="margin-top:2px;"><strong>Push Access:</strong> ${ready ? '<span style="color:var(--success); font-weight:700;">✅ Ready (PAT Token Active)</span>' : '<span style="color:var(--danger); font-weight:700;">⚠️ Token Missing / Invalid</span>'}</div>
             <div style="margin-top:2px;"><strong>Encryption:</strong> ${ghConfig.encryptionKey ? '<span style="color:var(--success); font-weight:700;">✅ Passphrase Configured</span>' : '<span style="color:var(--danger); font-weight:700;">⚠️ Passphrase Required</span>'}</div>
           </div>
+
+          ${currentUser && currentUser.role === 'admin' ? `
+            <div class="card" style="padding:10px; border:1px solid var(--border-subtle); background:var(--bg-card); display:flex; flex-direction:column; gap:6px;">
+              <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Admin Token Broadcast</div>
+              <div style="font-size:0.78rem; color:var(--text-secondary);">Paste a new Personal Access Token here to silently update all mobile devices:</div>
+              <input type="password" id="modal-quick-pat-input" class="form-control" placeholder="Paste ghp_... Personal Access Token" value="${esc(ghConfig.token || '')}" style="font-size:0.85rem; font-family:monospace; padding:6px 10px;" />
+              <button type="button" id="modal-quick-pat-btn" onclick="executeQuickPatBroadcastFromModal()" class="btn btn-warning" style="width:100%; min-height:36px; font-size:0.85rem; font-weight:700;">
+                ⚡ Verify & Broadcast Token to All Devices
+              </button>
+            </div>
+          ` : ''}
 
           <div style="display:flex; flex-direction:column; gap:8px; margin-top:4px;">
             <button type="button" onclick="executeForcePushFromModal()" class="btn btn-primary" style="width:100%; min-height:44px; font-size:0.95rem; font-weight:700;">
@@ -5610,6 +5698,64 @@ ${s.email ? 'Email: ' + s.email : ''}
           </div>
         </div>
       `;
+    }
+
+    async function executeQuickPatBroadcastFromModal() {
+      const input = document.getElementById('modal-quick-pat-input');
+      if (!input) return;
+      const newToken = (input.value || '').trim();
+      if (!newToken) {
+        notify('Please enter a GitHub Personal Access Token.', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('modal-quick-pat-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Verifying Token with GitHub...';
+      }
+
+      try {
+        const testRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(ghConfig.owner || 'PlayDough1992')}/${encodeURIComponent(ghConfig.repo || 'FieldTitan')}`, {
+          headers: {
+            'Authorization': `Bearer ${newToken}`,
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+          }
+        });
+        if (testRes.status === 401) {
+          notify('GitHub rejected this token: Bad credentials (HTTP 401). Please check the token.', 'error');
+          return;
+        }
+
+        ghConfig.token = newToken;
+        saveGhConfig();
+
+        state.companySync = {
+          token: newToken,
+          encryptionKey: (ghConfig.encryptionKey || '').trim(),
+          owner: (ghConfig.owner || 'PlayDough1992').trim(),
+          repo: (ghConfig.repo || 'FieldTitan').trim(),
+          branch: (ghConfig.branch || 'main').trim(),
+          path: (ghConfig.path || 'DATA.json').trim(),
+          updatedAt: new Date().toISOString()
+        };
+        saveAppState(false);
+
+        if (btn) btn.textContent = 'Broadcasting to Cloud Vault...';
+        const ok = await pushDatabaseToGitHub(false, false, 'Broadcast updated GitHub token from Quick Sync');
+        if (ok) {
+          notify('GitHub token verified and broadcasted to all company devices!', 'success');
+          renderQuickSyncModal();
+        }
+      } catch (err) {
+        notify(`Broadcast failed: ${err.message}`, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '⚡ Verify & Broadcast Token to All Devices';
+        }
+      }
     }
 
     async function executeForcePushFromModal() {
@@ -8167,25 +8313,78 @@ ${s.email ? 'Email: ' + s.email : ''}
       );
     }
 
-    function saveGitHubSyncSettings(e) {
+    async function saveGitHubSyncSettings(e) {
       e.preventDefault();
       const fd = new FormData(e.target);
+      const newOwner = (fd.get('owner') || '').trim() || 'PlayDough1992';
+      const newRepo = (fd.get('repo') || '').trim() || 'FieldTitan';
+      const newBranch = (fd.get('branch') || '').trim() || 'main';
+      const newPath = (fd.get('path') || '').trim() || 'DATA.json';
+      const newToken = (fd.get('token') || '').trim();
+      const newEncKey = (fd.get('encryptionKey') || '').trim();
+
+      // If token provided, test against GitHub API to catch bad credentials early
+      if (newToken) {
+        try {
+          updateSyncBadge('syncing', 'Verifying Token...');
+          const testRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(newOwner)}/${encodeURIComponent(newRepo)}`, {
+            headers: {
+              'Authorization': `Bearer ${newToken}`,
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28'
+            }
+          });
+          if (testRes.status === 401) {
+            updateSyncBadge('error', 'Bad credentials (HTTP 401)');
+            notify('GitHub rejected this token: Bad credentials (HTTP 401). Please check the Personal Access Token and try again.', 'error');
+            return;
+          }
+        } catch (testErr) {
+          console.warn('[FieldTitan Sync] Token pre-check warning:', testErr);
+        }
+      }
+
       ghConfig = {
         ...ghConfig,
-        owner: (fd.get('owner') || '').trim() || 'PlayDough1992',
-        repo: (fd.get('repo') || '').trim() || 'FieldTitan',
-        branch: (fd.get('branch') || '').trim() || 'main',
-        path: (fd.get('path') || '').trim() || 'DATA.json',
-        token: (fd.get('token') || '').trim(),
-        encryptionKey: (fd.get('encryptionKey') || '').trim(),
+        owner: newOwner,
+        repo: newRepo,
+        branch: newBranch,
+        path: newPath,
+        token: newToken,
+        encryptionKey: newEncKey,
         autoPull: fd.get('autoPull') === 'on',
         autoPush: fd.get('autoPush') === 'on',
         liveSync: fd.get('liveSync') === 'on'
       };
       saveGhConfig();
+
+      // Update state.companySync so it embeds in DATA.json
+      state.companySync = {
+        token: newToken,
+        encryptionKey: newEncKey,
+        owner: newOwner,
+        repo: newRepo,
+        branch: newBranch,
+        path: newPath,
+        updatedAt: new Date().toISOString()
+      };
+      saveAppState(false);
+
       startLiveSyncEngine();
       updateSyncBadge(isGhConfigured() ? 'idle' : 'local', isGhConfigured() ? 'Configured & Encrypted' : 'Key or PAT Missing');
-      notify('GitHub repository sync & real-time auto-sync settings saved!');
+      notify('GitHub credentials saved locally! Broadcasting to cloud vault...');
+
+      if (isGhPushReady()) {
+        try {
+          const pushed = await pushDatabaseToGitHub(false, false, 'Broadcast updated company GitHub credentials to all devices');
+          if (pushed) {
+            notify('New GitHub credentials successfully broadcasted to all tech and admin devices!', 'success');
+          }
+        } catch (pushErr) {
+          notify(`Saved locally, but failed to broadcast to GitHub: ${pushErr.message}`, 'error');
+        }
+      }
+
       renderCurrentView();
     }
 
