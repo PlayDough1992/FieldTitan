@@ -1174,6 +1174,7 @@
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; color:#cbd5e1; font-size:0.8rem;">
         <div id="lightbox-meta">Captured by Tech</div>
         <div style="display:flex; gap:8px;">
+          <button id="lightbox-replace-btn" onclick="triggerLightboxReplace()" class="btn btn-warning btn-sm" style="font-weight:700;">📷 Replace</button>
           <button id="lightbox-download-btn" onclick="downloadCurrentLightboxPhoto()" class="btn btn-secondary btn-sm" style="background:#1e293b; color:#fff; border-color:#334155;">📥 Download Decrypted</button>
           <button id="lightbox-delete-btn" onclick="confirmDeleteCurrentLightboxPhoto()" class="btn btn-danger btn-sm">🗑️ Delete</button>
         </div>
@@ -1857,13 +1858,18 @@
       return vaultIdbPromise;
     }
 
-    async function cacheVaultPhoto(vaultPath, dataUrl) {
+    async function cacheVaultPhoto(vaultPath, dataUrl, encryptedJson = null) {
       try {
         photoMemoryCache.set(vaultPath, dataUrl);
         const db = await getVaultDb();
         if (!db) return;
         const tx = db.transaction('photos', 'readwrite');
-        tx.objectStore('photos').put({ vaultPath, dataUrl, cachedAt: Date.now() });
+        tx.objectStore('photos').put({
+          vaultPath,
+          dataUrl,
+          encryptedJson: encryptedJson || null,
+          cachedAt: Date.now()
+        });
       } catch (e) {}
     }
 
@@ -1967,6 +1973,14 @@
       }
 
       const dataUrl = await compressImageFile(file, 1280, 0.75);
+      // Ultra-compact 240px thumbnail (~4-6KB) for instant zero-lag offline display everywhere
+      let thumbnail = '';
+      try {
+        thumbnail = await compressImageFile(file, 240, 0.45);
+      } catch (thumbErr) {
+        thumbnail = '';
+      }
+
       const photoId = 'ph_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
       const vaultPath = `vault/${entityType}s/${entityId}/${photoId}.enc`;
 
@@ -1981,9 +1995,10 @@
       const jsonStr = JSON.stringify(encryptedEnvelope, null, 2);
 
       // Cache locally immediately for instant zero-lag rendering
-      await cacheVaultPhoto(vaultPath, dataUrl);
+      await cacheVaultPhoto(vaultPath, dataUrl, jsonStr);
 
       // Push encrypted file to GitHub repository if PAT is available
+      let cloudUploaded = false;
       if (isGhPushReady()) {
         try {
           const owner = encodeURIComponent((ghConfig.owner || '').trim());
@@ -1991,7 +2006,7 @@
           const cleanPath = vaultPath.split('/').map(encodeURIComponent).join('/');
           const putUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}`;
 
-          await fetch(putUrl, {
+          const putRes = await fetch(putUrl, {
             method: 'PUT',
             headers: {
               'Authorization': `Bearer ${ghConfig.token.trim()}`,
@@ -2005,8 +2020,16 @@
               branch: (ghConfig.branch || 'main').trim()
             })
           });
+
+          if (putRes.ok) {
+            cloudUploaded = true;
+            console.log(`[FieldTitan Vault] Photo ${photoId} encrypted and pushed to GitHub repo!`);
+          } else {
+            const errJson = await putRes.json().catch(() => ({}));
+            console.warn(`[FieldTitan Vault] Remote photo upload rejected (${putRes.status}):`, errJson.message);
+          }
         } catch (pushErr) {
-          console.warn('Silent notice: remote photo push deferred:', pushErr);
+          console.warn('[FieldTitan Vault] Remote photo push network error:', pushErr);
         }
       }
 
@@ -2015,14 +2038,117 @@
         category: category || 'general',
         caption: (caption || '').trim(),
         vaultPath: vaultPath,
+        thumbnail: thumbnail, // Instant offline preview on all devices
         capturedAt: new Date().toISOString(),
         uploadedBy: currentUser ? currentUser.name : 'Technician',
-        size: file.size
+        size: file.size,
+        cloudUploaded
       };
     }
 
+    let isSyncingVaultPhotos = false;
+    async function syncCachedVaultPhotosToGitHub() {
+      if (!isGhPushReady() || isSyncingVaultPhotos || !navigator.onLine) return 0;
+      isSyncingVaultPhotos = true;
+      let uploaded = 0;
+      try {
+        const db = await getVaultDb();
+        if (!db) return 0;
+
+        const allStatePhotos = [];
+        (state.jobs || []).forEach(j => (j.photos || []).forEach(p => allStatePhotos.push({ ...p, entityType: 'job', entityId: j.id })));
+        (state.estimates || []).forEach(e => (e.photos || []).forEach(p => allStatePhotos.push({ ...p, entityType: 'estimate', entityId: e.id })));
+        if (allStatePhotos.length === 0) return 0;
+
+        const tx = db.transaction('photos', 'readonly');
+        const store = tx.objectStore('photos');
+        const cachedRecords = await new Promise((res) => {
+          const req = store.getAll();
+          req.onsuccess = () => res(req.result || []);
+          req.onerror = () => res([]);
+        });
+
+        for (const item of cachedRecords) {
+          if (!item.vaultPath || !item.dataUrl) continue;
+          const photoRef = allStatePhotos.find(p => p.vaultPath === item.vaultPath);
+          if (!photoRef) continue;
+
+          try {
+            const owner = encodeURIComponent((ghConfig.owner || '').trim());
+            const repo = encodeURIComponent((ghConfig.repo || '').trim());
+            const cleanPath = item.vaultPath.split('/').map(encodeURIComponent).join('/');
+            const branch = encodeURIComponent((ghConfig.branch || 'main').trim());
+            const headUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}?ref=${branch}`;
+
+            const headRes = await fetch(headUrl, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${ghConfig.token.trim()}`,
+                'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28'
+              }
+            });
+
+            // If photo file does NOT exist on GitHub (404), upload it now!
+            if (headRes.status === 404) {
+              console.log(`[FieldTitan Vault] Auto-uploading missing cloud photo from local cache: ${item.vaultPath}`);
+              let jsonStr = item.encryptedJson;
+              if (!jsonStr) {
+                const encryptedEnvelope = await encryptVaultMedia(item.dataUrl, ghConfig.encryptionKey.trim());
+                encryptedEnvelope.id = photoRef.id;
+                encryptedEnvelope.category = photoRef.category;
+                encryptedEnvelope.caption = photoRef.caption || '';
+                encryptedEnvelope.uploadedBy = photoRef.uploadedBy || 'Technician';
+                jsonStr = JSON.stringify(encryptedEnvelope, null, 2);
+              }
+
+              const putUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}`;
+              const putRes = await fetch(putUrl, {
+                method: 'PUT',
+                headers: {
+                  'Authorization': `Bearer ${ghConfig.token.trim()}`,
+                  'Accept': 'application/vnd.github+json',
+                  'Content-Type': 'application/json',
+                  'X-GitHub-Api-Version': '2022-11-28'
+                },
+                body: JSON.stringify({
+                  message: `Sync encrypted photo ${photoRef.id} (${new Date().toISOString()})`,
+                  content: utf8ToBase64(jsonStr),
+                  branch: (ghConfig.branch || 'main').trim()
+                })
+              });
+
+              if (putRes.ok) {
+                uploaded++;
+                photoRef.cloudUploaded = true;
+                console.log(`[FieldTitan Vault] Successfully pushed ${item.vaultPath} to GitHub!`);
+              }
+            }
+          } catch (e) {
+            console.warn(`[FieldTitan Vault] Photo check/upload notice for ${item.vaultPath}:`, e.message);
+          }
+        }
+      } catch (err) {
+        console.warn('syncCachedVaultPhotosToGitHub error:', err);
+      } finally {
+        isSyncingVaultPhotos = false;
+      }
+      return uploaded;
+    }
+
+    async function manualSyncVaultPhotos(entityId = '') {
+      notify('Scanning local photo cache and syncing to cloud vault...');
+      const count = await syncCachedVaultPhotosToGitHub();
+      if (count > 0) {
+        notify(`Successfully uploaded ${count} pending photo(s) to cloud repo vault!`, 'success');
+        loadAllPendingVaultPhotos();
+      } else {
+        notify('All local photos on this device are synchronized with GitHub.');
+      }
+    }
+
     async function loadVaultPhotoElement(vaultPath, imgElement) {
-      if (!vaultPath) return;
+      if (!vaultPath || !imgElement) return;
       const cached = await getCachedVaultPhoto(vaultPath);
       if (cached) {
         imgElement.src = cached;
@@ -2067,14 +2193,95 @@
 
         const envelope = JSON.parse(rawJson);
         const dataUrl = await decryptVaultMedia(envelope, (ghConfig.encryptionKey || '').trim());
-        await cacheVaultPhoto(vaultPath, dataUrl);
+        await cacheVaultPhoto(vaultPath, dataUrl, rawJson);
         imgElement.src = dataUrl;
         imgElement.style.opacity = '1';
       } catch (err) {
         console.warn('Failed to load vault photo:', err);
-        imgElement.alt = 'Decryption failed or photo offline';
-        imgElement.style.opacity = '0.3';
+        handleVaultPhotoError(
+          imgElement,
+          imgElement.dataset.photoId || '',
+          imgElement.dataset.entityType || 'job',
+          imgElement.dataset.entityId || '',
+          imgElement.dataset.category || 'general'
+        );
       }
+    }
+
+    function handleVaultPhotoError(imgElement, photoId, entityType, entityId, category) {
+      if (!imgElement) return;
+      const card = imgElement.closest('.photo-thumb-card');
+      if (!card) return;
+
+      const catName = (category || 'JOB').toUpperCase();
+      card.innerHTML = `
+        <div class="photo-offline-placeholder" style="padding:10px; width:100%; height:100%; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; background:var(--bg-subtle); border-radius:8px;">
+          <div style="font-size:1.4rem; line-height:1;">⚠️</div>
+          <div style="font-size:0.7rem; font-weight:800; color:var(--text-secondary); margin-top:4px;">${esc(catName)} PHOTO OFFLINE</div>
+          <div style="font-size:0.65rem; color:var(--text-muted); line-height:1.2; margin:2px 0 6px 0;">Cloud photo not yet uploaded from source device</div>
+          <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center;">
+            <button type="button" onclick="event.stopPropagation(); triggerPhotoRetry('${esc(photoId)}', '${esc(imgElement.dataset.vaultPath || '')}', this)" class="btn btn-secondary btn-sm" style="font-size:0.68rem; padding:2px 6px;">🔄 Retry</button>
+            <button type="button" onclick="event.stopPropagation(); triggerPhotoReplacement('${esc(entityType)}', '${esc(entityId)}', '${esc(photoId)}', '${esc(category)}')" class="btn btn-primary btn-sm" style="font-size:0.68rem; padding:2px 6px;">📷 Replace</button>
+            <button type="button" onclick="event.stopPropagation(); deleteVaultPhoto('${esc(entityType)}', '${esc(entityId)}', '${esc(photoId)}')" class="btn btn-ghost btn-sm" style="color:var(--danger); font-size:0.68rem; padding:2px 6px;" title="Delete">✕</button>
+          </div>
+        </div>
+      `;
+    }
+
+    async function triggerPhotoRetry(photoId, vaultPath, btn) {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '...';
+      }
+      try {
+        await syncCachedVaultPhotosToGitHub();
+        const card = document.getElementById(`thumb-${photoId}`);
+        if (card) {
+          card.innerHTML = `
+            <div style="width:100%; height:100%; position:relative;">
+              <img data-vault-path="${vaultPath}" data-photo-id="${photoId}" alt="Retrying photo..." />
+            </div>
+          `;
+          const newImg = card.querySelector('img');
+          await loadVaultPhotoElement(vaultPath, newImg);
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '🔄 Retry';
+        }
+      }
+    }
+
+    function triggerPhotoReplacement(entityType, entityId, photoId, category) {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.capture = 'environment';
+      input.onchange = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        notify('Encrypting & uploading replacement photo to cloud vault...');
+        const newPhotoMeta = await uploadEncryptedPhotoToVault(file, entityType, entityId, category, '');
+        if (!newPhotoMeta) return;
+
+        let entity = entityType === 'job' ? state.jobs.find(j => j.id === entityId) : state.estimates.find(es => es.id === entityId);
+        if (entity && entity.photos) {
+          const idx = entity.photos.findIndex(p => p.id === photoId);
+          if (idx !== -1) {
+            entity.photos[idx] = newPhotoMeta;
+          } else {
+            entity.photos.push(newPhotoMeta);
+          }
+          saveAppState();
+          if (entityType === 'job') openJobDetail(entityId);
+          else openEstimateDetail(entityId);
+          renderCurrentView();
+          notify('Replacement photo secured and uploaded to vault!', 'success');
+          triggerImmediateDatabaseSync(`Replaced Photo in ${entityType === 'job' ? 'Work Order' : 'Estimate'}`);
+        }
+      };
+      input.click();
     }
 
     function loadAllPendingVaultPhotos() {
@@ -4001,6 +4208,9 @@
 
       if (photo.dataUrl) {
         img.src = photo.dataUrl;
+      } else if (photo.thumbnail) {
+        img.src = photo.thumbnail;
+        if (photo.vaultPath) loadVaultPhotoElement(photo.vaultPath, img);
       } else if (photo.vaultPath) {
         img.src = '';
         img.alt = 'Decrypting high-resolution photo...';
@@ -4025,6 +4235,13 @@
       a.click();
     }
 
+    function triggerLightboxReplace() {
+      if (!currentLightboxPhoto) return;
+      const { photo, entityType, entityId } = currentLightboxPhoto;
+      closePhotoLightbox();
+      triggerPhotoReplacement(entityType, entityId, photo.id, photo.category);
+    }
+
     function confirmDeleteCurrentLightboxPhoto() {
       if (!currentLightboxPhoto) return;
       const { photo, entityType, entityId } = currentLightboxPhoto;
@@ -4033,6 +4250,29 @@
         'Are you sure you want to permanently delete this photo from the work order and cloud repository?',
         () => deleteVaultPhoto(entityType, entityId, photo.id)
       );
+    }
+
+    function renderPhotoThumbCard(ph, entityType, entityId) {
+      const catMap = {
+        before: ['BEFORE', 'photo-badge-before'],
+        after: ['AFTER', 'photo-badge-after'],
+        serial: ['EQUIP', 'photo-badge-serial'],
+        receipt: ['RECEIPT', 'photo-badge-receipt'],
+        general: ['NOTE', 'photo-badge-general']
+      };
+      const [txt, cls] = catMap[ph.category] || ['PHOTO', 'photo-badge-general'];
+      const badge = `<span class="photo-badge-cat ${cls}">${txt}</span>`;
+      const imgSrc = ph.dataUrl || ph.thumbnail || '';
+
+      return `
+        <div class="photo-thumb-card" id="thumb-${ph.id}">
+          <div onclick='openPhotoLightbox(${JSON.stringify(ph).replace(/'/g, "&#39;")}, "${entityType}", "${entityId}")' style="width:100%; height:100%; position:relative; cursor:pointer;">
+            <img ${imgSrc ? `src="${imgSrc}"` : ''} data-vault-path="${ph.vaultPath || ''}" data-photo-id="${ph.id}" data-entity-type="${entityType}" data-entity-id="${entityId}" data-category="${ph.category || 'general'}" alt="${ph.category || 'Job'} photo" onerror="handleVaultPhotoError(this, '${ph.id}', '${entityType}', '${entityId}', '${ph.category || 'general'}')" />
+            ${badge}
+            ${ph.caption ? `<div class="photo-caption-tag">${esc(ph.caption)}</div>` : ''}
+          </div>
+        </div>
+      `;
     }
 
     function renderPhotoVaultUI(entity, entityType) {
@@ -4049,18 +4289,6 @@
       else if (activePhotoVaultTab === 'serial') displayedPhotos = equipPhotos;
       else if (activePhotoVaultTab === 'receipt') displayedPhotos = receiptPhotos;
 
-      const catBadge = (cat) => {
-        const map = {
-          before: ['BEFORE', 'photo-badge-before'],
-          after: ['AFTER', 'photo-badge-after'],
-          serial: ['EQUIP', 'photo-badge-serial'],
-          receipt: ['PART', 'photo-badge-receipt'],
-          general: ['NOTE', 'photo-badge-general']
-        };
-        const [txt, cls] = map[cat] || ['PHOTO', 'photo-badge-general'];
-        return `<span class="photo-badge-cat ${cls}">${txt}</span>`;
-      };
-
       return `
         <div class="card" style="margin-top:4px;">
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
@@ -4072,9 +4300,14 @@
                 🔒 End-to-End AES-256 Encrypted Proof & Records
               </div>
             </div>
-            <button type="button" onclick="openPhotoUploadModal('${entityType}', '${entity.id}')" class="btn btn-primary btn-sm">
-              + Attach / Camera Photo
-            </button>
+            <div style="display:flex; gap:6px;">
+              <button type="button" onclick="manualSyncVaultPhotos('${entity.id}')" class="btn btn-secondary btn-sm" title="Upload local device photos to cloud repo">
+                🔄 Sync Cloud
+              </button>
+              <button type="button" onclick="openPhotoUploadModal('${entityType}', '${entity.id}')" class="btn btn-primary btn-sm">
+                + Attach / Camera Photo
+              </button>
+            </div>
           </div>
 
           <!-- Photo Category Filter Pills -->
@@ -4099,13 +4332,7 @@
                   </div>
                   ${beforePhotos.length === 0 ? `<p style="font-size:0.75rem; color:var(--text-muted);">No before photos</p>` : `
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                      ${beforePhotos.map((ph) => `
-                        <div class="photo-thumb-card" onclick='openPhotoLightbox(${JSON.stringify(ph)}, "${entityType}", "${entity.id}")'>
-                          <img ${ph.dataUrl ? `src="${ph.dataUrl}"` : `data-vault-path="${ph.vaultPath}"`} alt="Before photo" />
-                          ${catBadge(ph.category)}
-                          ${ph.caption ? `<div class="photo-caption-tag">${esc(ph.caption)}</div>` : ''}
-                        </div>
-                      `).join('')}
+                      ${beforePhotos.map((ph) => renderPhotoThumbCard(ph, entityType, entity.id)).join('')}
                     </div>
                   `}
                 </div>
@@ -4116,13 +4343,7 @@
                   </div>
                   ${afterPhotos.length === 0 ? `<p style="font-size:0.75rem; color:var(--text-muted);">No after photos</p>` : `
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                      ${afterPhotos.map((ph) => `
-                        <div class="photo-thumb-card" onclick='openPhotoLightbox(${JSON.stringify(ph)}, "${entityType}", "${entity.id}")'>
-                          <img ${ph.dataUrl ? `src="${ph.dataUrl}"` : `data-vault-path="${ph.vaultPath}"`} alt="After photo" />
-                          ${catBadge(ph.category)}
-                          ${ph.caption ? `<div class="photo-caption-tag">${esc(ph.caption)}</div>` : ''}
-                        </div>
-                      `).join('')}
+                      ${afterPhotos.map((ph) => renderPhotoThumbCard(ph, entityType, entity.id)).join('')}
                     </div>
                   `}
                 </div>
@@ -4134,13 +4355,7 @@
               <p style="font-size:0.8rem; color:var(--text-muted); padding:10px 0;">No photos in this category yet. Tap "+ Attach / Camera Photo" above to capture jobsite visual proof.</p>
             ` : `
               <div class="photo-vault-grid">
-                ${displayedPhotos.map((ph) => `
-                  <div class="photo-thumb-card" onclick='openPhotoLightbox(${JSON.stringify(ph)}, "${entityType}", "${entity.id}")'>
-                    <img ${ph.dataUrl ? `src="${ph.dataUrl}"` : `data-vault-path="${ph.vaultPath}"`} alt="Job photo" />
-                    ${catBadge(ph.category)}
-                    ${ph.caption ? `<div class="photo-caption-tag">${esc(ph.caption)}</div>` : ''}
-                  </div>
-                `).join('')}
+                ${displayedPhotos.map((ph) => renderPhotoThumbCard(ph, entityType, entity.id)).join('')}
               </div>
             `}
           `}
