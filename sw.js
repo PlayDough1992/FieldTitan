@@ -1,5 +1,5 @@
 // FieldTitan Offline-First PWA Service Worker
-const CACHE_NAME = 'fieldtitan-cache-v7';
+const CACHE_NAME = 'fieldtitan-cache-v8';
 const CORE_ASSETS = [
   './',
   './index.html',

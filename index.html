@@ -1047,7 +1047,7 @@
             <svg id="icon-fs-enter" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
             <svg id="icon-fs-exit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>
           </button>
-          <button id="gh-sync-badge" onclick="switchTab('settings')" class="btn btn-secondary btn-sm header-action-btn" title="GitHub Repository Database Sync Status">
+          <button id="gh-sync-badge" onclick="openQuickSyncModal()" class="btn btn-secondary btn-sm header-action-btn" title="Cloud Database Sync Status & Actions">
             <span id="gh-sync-dot"></span>
             <span id="gh-sync-label" class="btn-text-mobile-hide">Local Only</span>
           </button>
@@ -1346,7 +1346,7 @@
 
   <!-- 7. Send PDF Receipt & Invoice Dispatch Modal -->
   <div id="send-receipt-modal" class="modal-overlay">
-    <div class="modal-box" style="max-width:500px;">
+    <div class="modal-box" style="max-width:520px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
         <h3 id="send-receipt-title" style="font-size:1.15rem; font-weight:800; margin:0; display:flex; align-items:center; gap:6px;">
           <span>🧾</span> Send PDF Receipt & Invoice
@@ -1363,41 +1363,59 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">Registered Customer Email</label>
+        <label class="form-label" style="font-weight:700;">Customer Email Address</label>
         <div style="display:flex; gap:8px;">
           <input type="email" id="send-receipt-email" class="form-control" placeholder="customer@email.com" />
           <button type="button" onclick="executeSendEmailReceipt()" class="btn btn-primary" style="white-space:nowrap; display:inline-flex; align-items:center; gap:6px;">
-            📧 Send Email
+            📧 Email PDF (Attach)
           </button>
         </div>
         <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
-          Generates an itemized receipt with invoice breakdown, payment status, and terms directly to their email.
+          Generates genuine vector PDF and opens email compose with the actual PDF attached directly.
         </div>
       </div>
 
-      <div class="form-group" style="margin-top:10px;">
-        <label class="form-label">Registered Customer Phone (SMS)</label>
+      <div class="form-group" style="margin-top:12px;">
+        <label class="form-label" style="font-weight:700;">Customer Mobile Phone (SMS/MMS)</label>
         <div style="display:flex; gap:8px;">
           <input type="tel" id="send-receipt-phone" class="form-control" placeholder="(555) 000-0000" />
           <button type="button" onclick="executeSendSmsReceipt()" class="btn btn-secondary" style="white-space:nowrap; display:inline-flex; align-items:center; gap:6px;">
-            📱 Send SMS
+            📱 Text PDF (Attach)
           </button>
         </div>
         <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
-          Sends an instant SMS text receipt with total paid, balance, and itemized confirmation.
+          Generates genuine vector PDF and opens messaging with the actual PDF attached via MMS/media.
         </div>
       </div>
 
-      <div style="border-top:1px solid var(--border-subtle); padding-top:14px; margin-top:14px; display:flex; flex-direction:column; gap:8px;">
-        <div style="display:flex; gap:8px;">
-          <button type="button" onclick="executePrintPdfReceipt()" class="btn btn-secondary" style="flex:1; display:inline-flex; align-items:center; justify-content:center; gap:6px;">
-            🖨️ Print / Save PDF
+      <div style="border-top:1px solid var(--border-subtle); padding-top:14px; margin-top:16px; display:flex; flex-direction:column; gap:8px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+          <button type="button" onclick="executeDownloadPdfReceipt()" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; justify-content:center; gap:6px;">
+            📥 Download PDF
           </button>
-          <button type="button" onclick="executeNativeShareReceipt()" class="btn btn-secondary" style="flex:1; display:inline-flex; align-items:center; justify-content:center; gap:6px;">
-            📲 Share Receipt
+          <button type="button" onclick="executeNativeShareReceipt()" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; justify-content:center; gap:6px;">
+            📲 Share Sheet
+          </button>
+          <button type="button" onclick="executePrintPdfReceipt()" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; justify-content:center; gap:6px;">
+            🖨️ Print
           </button>
         </div>
         <button type="button" onclick="closeSendReceiptModal()" class="btn btn-ghost btn-sm" style="margin-top:4px;">Done / Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. Cloud Database Sync & Diagnostics Modal -->
+  <div id="quick-sync-modal" class="modal-overlay">
+    <div class="modal-box" style="max-width:480px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="font-size:1.15rem; font-weight:800; margin:0; display:flex; align-items:center; gap:8px;">
+          <span>☁️</span> Cloud Database Sync
+        </h3>
+        <button onclick="closeQuickSyncModal()" class="btn btn-secondary btn-icon" style="padding:4px 8px;">✕</button>
+      </div>
+      <div id="quick-sync-body">
+        <!-- Rendered dynamically -->
       </div>
     </div>
   </div>
@@ -2179,27 +2197,28 @@
             }
             const parsedRaw = await decryptDatabasePayload(rawContent, ghConfig.encryptionKey.trim());
             if (parsedRaw && Array.isArray(parsedRaw.customers)) {
-              state = {
-                ...BLANK_STATE,
-                ...parsedRaw,
-                settings: { ...BLANK_STATE.settings, ...(parsedRaw.settings || {}) },
-                customers: Array.isArray(parsedRaw.customers) ? parsedRaw.customers : [],
-                equipment: Array.isArray(parsedRaw.equipment) ? parsedRaw.equipment : [],
-                pricebook: Array.isArray(parsedRaw.pricebook) ? parsedRaw.pricebook : [],
-                estimates: Array.isArray(parsedRaw.estimates) ? parsedRaw.estimates : [],
-                jobs: Array.isArray(parsedRaw.jobs) ? parsedRaw.jobs : [],
-                invoices: Array.isArray(parsedRaw.invoices) ? parsedRaw.invoices : [],
-                payments: Array.isArray(parsedRaw.payments) ? parsedRaw.payments : [],
-                users: Array.isArray(parsedRaw.users) ? parsedRaw.users : (state.users || [])
-              };
+              // Check if local has invoices or payments not in remote
+              const rawInvIds = new Set((parsedRaw.invoices || []).map(i => i.id));
+              const rawPayIds = new Set((parsedRaw.payments || []).map(p => p.id));
+              const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !rawInvIds.has(i.id));
+              const hasUnpushedPayments = (state.payments || []).some(p => p.id && !rawPayIds.has(p.id));
+
+              state = mergeAppState(state, parsedRaw);
               ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
               saveAppState(true);
               applyTheme();
               syncCurrentUserSession();
               migrateAndLinkJobAssignments();
               updateSyncBadge('synced', `Pulled & Decrypted ${ghSyncState.lastSyncedAt}`);
-              if (!silent) notify('Database pulled and decrypted from public DATA.json on GitHub!');
+              if (!silent) notify('Database pulled and merged from public DATA.json on GitHub!', 'success');
               renderCurrentView();
+
+              if ((hasUnpushedInvoices || hasUnpushedPayments) && isGhPushReady()) {
+                console.log('[FieldTitan Sync] Unpushed local invoices/payments detected; pushing merged database to cloud...');
+                setTimeout(() => {
+                  pushDatabaseToGitHub(true, false, 'Auto-sync merged local records to cloud');
+                }, 400);
+              }
               return true;
             }
           }
@@ -2230,19 +2249,13 @@
           throw new Error('Remote JSON file does not match FieldTitan database structure.');
         }
 
-        state = {
-          ...BLANK_STATE,
-          ...parsed,
-          settings: { ...BLANK_STATE.settings, ...(parsed.settings || {}) },
-          customers: Array.isArray(parsed.customers) ? parsed.customers : [],
-          equipment: Array.isArray(parsed.equipment) ? parsed.equipment : [],
-          pricebook: Array.isArray(parsed.pricebook) ? parsed.pricebook : [],
-          estimates: Array.isArray(parsed.estimates) ? parsed.estimates : [],
-          jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
-          invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
-          payments: Array.isArray(parsed.payments) ? parsed.payments : [],
-          users: Array.isArray(parsed.users) ? parsed.users : (state.users || [])
-        };
+        // Check if local has invoices or payments not in remote
+        const remoteInvIds = new Set((parsed.invoices || []).map(i => i.id));
+        const remotePayIds = new Set((parsed.payments || []).map(p => p.id));
+        const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !remoteInvIds.has(i.id));
+        const hasUnpushedPayments = (state.payments || []).some(p => p.id && !remotePayIds.has(p.id));
+
+        state = mergeAppState(state, parsed);
 
         ghConfig.lastSha = fileObj.sha || '';
         ghSyncState.lastSha = fileObj.sha || '';
@@ -2252,9 +2265,16 @@
         applyTheme();
         syncCurrentUserSession();
         migrateAndLinkJobAssignments();
-        updateSyncBadge('synced', `Pulled & Decrypted ${ghSyncState.lastSyncedAt}`);
-        if (!silent) notify('Database pulled and decrypted from DATA.json on GitHub!');
+        updateSyncBadge('synced', `Pulled & Synced ${ghSyncState.lastSyncedAt}`);
+        if (!silent) notify('Database pulled and merged from DATA.json on GitHub!', 'success');
         renderCurrentView();
+
+        if ((hasUnpushedInvoices || hasUnpushedPayments) && isGhPushReady()) {
+          console.log('[FieldTitan Sync] Unpushed local invoices/payments detected; pushing merged database to cloud...');
+          setTimeout(() => {
+            pushDatabaseToGitHub(true, false, 'Auto-sync merged local records to cloud');
+          }, 400);
+        }
         return true;
       } catch (err) {
         updateSyncBadge('error', err.message || 'Network or decryption error');
@@ -2278,7 +2298,21 @@
           if (!remoteItem) {
             map.set(localItem.id, { ...localItem });
           } else {
-            const merged = { ...remoteItem, ...localItem };
+            const remoteTime = remoteItem.updatedAt ? new Date(remoteItem.updatedAt).getTime() : 0;
+            const localTime = localItem.updatedAt ? new Date(localItem.updatedAt).getTime() : 0;
+
+            let merged = (remoteTime > localTime) ? { ...localItem, ...remoteItem } : { ...remoteItem, ...localItem };
+
+            // Invoices: Status 'Paid' is sticky (once paid, keep paid)
+            if (remoteItem.status === 'Paid' || localItem.status === 'Paid') {
+              merged.status = 'Paid';
+            }
+            // Signatures: Preserve signature if either has signed
+            if (remoteItem.signature || localItem.signature) {
+              merged.signature = remoteItem.signature || localItem.signature;
+              merged.signedAt = remoteItem.signedAt || localItem.signedAt || '';
+            }
+
             if (Array.isArray(localItem.photos) || Array.isArray(remoteItem.photos)) {
               const photoMap = new Map();
               (remoteItem.photos || []).forEach(p => photoMap.set(p.id || p.vaultPath || p.dataUrl, p));
@@ -2302,6 +2336,11 @@
               (remoteItem.checklist || []).forEach(c => chkMap.set(c.id, c));
               (localItem.checklist || []).forEach(c => chkMap.set(c.id, c));
               merged.checklist = Array.from(chkMap.values());
+            }
+            if (Array.isArray(localItem.items) || Array.isArray(remoteItem.items)) {
+              const localLen = (localItem.items || []).length;
+              const remoteLen = (remoteItem.items || []).length;
+              merged.items = localLen >= remoteLen ? (localItem.items || []) : (remoteItem.items || []);
             }
             map.set(localItem.id, merged);
           }
@@ -2563,23 +2602,19 @@
     }
 
     function applyRemoteStateUpdate(parsed, remoteSha) {
-      // Check if data actually changed to prevent unnecessary UI renders
-      const serializedOld = JSON.stringify(state);
-      const incomingState = {
-        ...BLANK_STATE,
-        ...parsed,
-        settings: { ...BLANK_STATE.settings, ...(parsed.settings || {}) },
-        customers: Array.isArray(parsed.customers) ? parsed.customers : [],
-        equipment: Array.isArray(parsed.equipment) ? parsed.equipment : [],
-        pricebook: Array.isArray(parsed.pricebook) ? parsed.pricebook : [],
-        estimates: Array.isArray(parsed.estimates) ? parsed.estimates : [],
-        jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
-        invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
-        payments: Array.isArray(parsed.payments) ? parsed.payments : [],
-        users: Array.isArray(parsed.users) ? parsed.users : (state.users || [])
-      };
+      if (!parsed || typeof parsed !== 'object') return;
 
-      if (serializedOld === JSON.stringify(incomingState)) {
+      // Detect if local state has invoices or payments not yet in remote
+      const remoteInvIds = new Set((parsed.invoices || []).map(i => i.id));
+      const remotePayIds = new Set((parsed.payments || []).map(p => p.id));
+      const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !remoteInvIds.has(i.id));
+      const hasUnpushedPayments = (state.payments || []).some(p => p.id && !remotePayIds.has(p.id));
+
+      const merged = mergeAppState(state, parsed);
+      const serializedOld = JSON.stringify(state);
+      const serializedNew = JSON.stringify(merged);
+
+      if (serializedOld === serializedNew) {
         if (remoteSha) {
           ghConfig.lastSha = remoteSha;
           ghSyncState.lastSha = remoteSha;
@@ -2588,7 +2623,7 @@
         return;
       }
 
-      state = incomingState;
+      state = merged;
       if (remoteSha) {
         ghConfig.lastSha = remoteSha;
         ghSyncState.lastSha = remoteSha;
@@ -2626,6 +2661,14 @@
           chime: 'sync',
           renotify: true
         });
+      }
+
+      // If local device had unpushed invoices/payments, push merged database to GitHub
+      if ((hasUnpushedInvoices || hasUnpushedPayments) && isGhPushReady()) {
+        console.log('[FieldTitan Sync] Unpushed local records merged during live sync; auto-pushing to cloud...');
+        setTimeout(() => {
+          pushDatabaseToGitHub(true, false, 'Auto-sync live merged local records to cloud');
+        }, 500);
       }
     }
 
@@ -3551,11 +3594,13 @@
             throw new Error('Incorrect password. Please try again.');
           }
 
-          if (localUser.syncBundle && (!ghConfig.encryptionKey || !ghConfig.token)) {
+          if (localUser.syncBundle) {
             try {
               const unwrapped = await unwrapCredentials(localUser.syncBundle, password);
-              ghConfig = { ...ghConfig, ...unwrapped };
-              saveGhConfig();
+              if (unwrapped && (unwrapped.token || unwrapped.encryptionKey)) {
+                ghConfig = { ...ghConfig, ...unwrapped };
+                saveGhConfig();
+              }
             } catch (bundleErr) {
               console.warn('Could not unwrap sync bundle:', bundleErr);
             }
@@ -3607,19 +3652,7 @@
           throw new Error('Could not decrypt company database.');
         }
 
-        state = {
-          ...BLANK_STATE,
-          ...decryptedState,
-          settings: { ...BLANK_STATE.settings, ...(decryptedState.settings || {}) },
-          customers: Array.isArray(decryptedState.customers) ? decryptedState.customers : [],
-          equipment: Array.isArray(decryptedState.equipment) ? decryptedState.equipment : [],
-          pricebook: Array.isArray(decryptedState.pricebook) ? decryptedState.pricebook : [],
-          estimates: Array.isArray(decryptedState.estimates) ? decryptedState.estimates : [],
-          jobs: Array.isArray(decryptedState.jobs) ? decryptedState.jobs : [],
-          invoices: Array.isArray(decryptedState.invoices) ? decryptedState.invoices : [],
-          payments: Array.isArray(decryptedState.payments) ? decryptedState.payments : [],
-          users: Array.isArray(decryptedState.users) ? decryptedState.users : []
-        };
+        state = mergeAppState(state, decryptedState);
 
         const cloudUser = (state.users || []).find(u => u.email.toLowerCase() === email);
         if (!cloudUser) throw new Error('User profile missing in decrypted database.');
@@ -4943,8 +4976,333 @@
     }
 
     /* ==========================================================================
-       SEND PDF RECEIPT & INVOICE MULTI-CHANNEL DISPATCH
+       7. OFFICIAL VECTOR PDF GENERATOR, ATTACHMENT DISPATCH & REAL-TIME SYNC MODAL
        ========================================================================== */
+    function sanitizePdfText(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/[^\x20-\x7E\xA0-\xFF]/g, ' ');
+    }
+
+    function binaryStringToUint8Array(str) {
+      const len = str.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = str.charCodeAt(i) & 0xff;
+      }
+      return bytes;
+    }
+
+    function buildDocumentPdfBlob(doc, type = 'invoice') {
+      const isInv = type === 'invoice';
+      const s = state.settings || {};
+      const compName = s.companyName || 'FieldTitan Service Co.';
+      const compPhone = s.phone || '';
+      const compEmail = s.email || '';
+      const compAddress = s.address || '';
+      const compLic = s.licenseNumber ? `Lic #${s.licenseNumber}` : '';
+
+      const cust = getCustomer(doc.customerId) || { name: 'Valued Customer' };
+      const fin = calcFinancials(doc.items, doc.taxRate, doc.discount);
+      const paid = isInv ? getInvoicePaidAmount(doc.id) : 0;
+      const balance = isInv ? Math.max(0, fin.total - paid) : fin.total;
+
+      const moneyFmt = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const dateFmt = (d) => d ? fmtDate(d) : 'N/A';
+
+      const streamOps = [];
+      const setFillColor = (r, g, b) => streamOps.push(`${(r/255).toFixed(3)} ${(g/255).toFixed(3)} ${(b/255).toFixed(3)} rg`);
+      const setStrokeColor = (r, g, b) => streamOps.push(`${(r/255).toFixed(3)} ${(g/255).toFixed(3)} ${(b/255).toFixed(3)} RG`);
+      const setLineWidth = (w) => streamOps.push(`${w} w`);
+      const drawRect = (x, y, w, h, fill = true, stroke = false) => {
+        streamOps.push(`${x} ${y} ${w} ${h} re`);
+        if (fill && stroke) streamOps.push('B');
+        else if (fill) streamOps.push('f');
+        else if (stroke) streamOps.push('S');
+      };
+      const drawLine = (x1, y1, x2, y2) => {
+        streamOps.push(`${x1} ${y1} m ${x2} ${y2} l S`);
+      };
+      const drawText = (text, x, y, font = '/F1', size = 10, r = 30, g = 41, b = 59) => {
+        setFillColor(r, g, b);
+        streamOps.push(`BT ${font} ${size} Tf ${x} ${y} Td (${sanitizePdfText(text)}) Tj ET`);
+      };
+      const drawTextRight = (text, rightX, y, font = '/F1', size = 10, r = 30, g = 41, b = 59, approxCharWidth = 5.5) => {
+        const w = (text || '').length * (approxCharWidth * (size / 10));
+        drawText(text, rightX - w, y, font, size, r, g, b);
+      };
+
+      // Top Header Banner (slate-900 / dark navy)
+      setFillColor(15, 23, 42);
+      drawRect(0, 712, 612, 80, true, false);
+
+      // Company Brand Name & License
+      drawText(compName.toUpperCase(), 36, 756, '/F2', 18, 255, 255, 255);
+      drawText([compLic, compPhone, compEmail, compAddress].filter(Boolean).join(' • '), 36, 734, '/F1', 8.5, 148, 163, 184);
+
+      // Document Title & Number Badge (Top Right)
+      const badgeTitle = isInv ? (balance <= 0.009 ? 'PAID RECEIPT' : 'INVOICE') : 'SERVICE ESTIMATE';
+      drawTextRight(badgeTitle, 576, 756, '/F2', 17, 56, 189, 248, 9.5);
+      drawTextRight(`#${doc.number || 'DOC-1001'}`, 576, 736, '/F2', 12, 255, 255, 255, 7);
+
+      // Metadata Cards: Bill To (Left) & Document Details (Right)
+      setFillColor(248, 250, 252);
+      setStrokeColor(226, 232, 240);
+      setLineWidth(1);
+      drawRect(36, 600, 260, 96, true, true);
+      drawRect(316, 600, 260, 96, true, true);
+
+      // Left: Customer Information
+      drawText('BILLED TO / CUSTOMER', 48, 680, '/F2', 8, 100, 116, 139);
+      drawText((cust.name || 'Valued Customer').slice(0, 32), 48, 662, '/F2', 11.5, 15, 23, 42);
+      drawText((cust.serviceAddress || cust.address || 'Service address on file').slice(0, 38), 48, 646, '/F1', 8.5, 71, 85, 105);
+      drawText(([cust.phone, cust.email].filter(Boolean).join(' • ') || 'Contact on file').slice(0, 40), 48, 632, '/F1', 8, 100, 116, 139);
+      if (cust.gateCode) {
+        drawText(`Gate / Access: ${cust.gateCode}`, 48, 616, '/F2', 8, 2, 132, 199);
+      }
+
+      // Right: Document Metadata
+      drawText('DOCUMENT DETAILS', 328, 680, '/F2', 8, 100, 116, 139);
+      drawText(`Issue Date: ${dateFmt(doc.date)}`, 328, 664, '/F1', 8.5, 51, 65, 85);
+      if (isInv) {
+        drawText(`Due Date: ${dateFmt(doc.dueDate)}`, 328, 650, '/F1', 8.5, 51, 65, 85);
+      }
+      if (doc.jobId) {
+        const job = (state.jobs || []).find(j => j.id === doc.jobId);
+        if (job) drawText(`Job: ${job.number} (${(job.title || '').slice(0, 24)})`, 328, 636, '/F1', 8.5, 51, 65, 85);
+      }
+      const statusColor = balance <= 0.009 ? [22, 163, 74] : (isInv ? [217, 119, 6] : [37, 99, 235]);
+      drawText(`Status: ${isInv ? (balance <= 0.009 ? 'PAID IN FULL' : `BALANCE DUE (${moneyFmt(balance)})`) : (doc.status || 'Active')}`, 328, 618, '/F2', 9, statusColor[0], statusColor[1], statusColor[2]);
+
+      // Line Items Table Header
+      const tableY = 565;
+      setFillColor(241, 245, 249);
+      setStrokeColor(203, 213, 225);
+      drawRect(36, tableY, 540, 24, true, true);
+
+      drawText('DESCRIPTION', 46, tableY + 7, '/F2', 8.5, 71, 85, 105);
+      drawTextRight('QTY / HRS', 410, tableY + 7, '/F2', 8.5, 71, 85, 105, 5);
+      drawTextRight('RATE', 485, tableY + 7, '/F2', 8.5, 71, 85, 105, 5);
+      drawTextRight('AMOUNT', 566, tableY + 7, '/F2', 8.5, 71, 85, 105, 5);
+
+      // Line Items
+      let curY = tableY - 22;
+      setStrokeColor(241, 245, 249);
+      setLineWidth(0.8);
+
+      const items = doc.items || [];
+      items.slice(0, 14).forEach((item, idx) => {
+        const qty = parseFloat(item.qty) || 1;
+        const price = parseFloat(item.price) || 0;
+        const lineTotal = qty * price;
+        const isHr = item.billingType === 'hourly';
+        const desc = `${item.name || 'Service item'}${isHr ? ' [Hourly Labor]' : ''}`;
+
+        if (idx % 2 === 1) {
+          setFillColor(250, 250, 250);
+          drawRect(36, curY - 5, 540, 20, true, false);
+        }
+
+        drawText(desc.slice(0, 45), 46, curY, '/F1', 9, 30, 41, 59);
+        drawTextRight(isHr ? `${qty} hrs` : `${qty}`, 410, curY, '/F1', 9, 71, 85, 105, 5);
+        drawTextRight(moneyFmt(price), 485, curY, '/F1', 9, 71, 85, 105, 5);
+        drawTextRight(moneyFmt(lineTotal), 566, curY, '/F2', 9, 15, 23, 42, 5.5);
+
+        drawLine(36, curY - 5, 576, curY - 5);
+        curY -= 20;
+      });
+
+      // Financials Totals Box (Bottom Right)
+      const totalsY = Math.min(curY - 10, 360);
+      setFillColor(248, 250, 252);
+      setStrokeColor(226, 232, 240);
+      drawRect(336, totalsY - 95, 240, 105, true, true);
+
+      drawText('Subtotal:', 348, totalsY - 12, '/F1', 9, 100, 116, 139);
+      drawTextRight(moneyFmt(fin.subtotal), 566, totalsY - 12, '/F1', 9, 30, 41, 59, 5.5);
+
+      let currentTotalRowY = totalsY - 26;
+      if (fin.discount > 0) {
+        drawText('Discount:', 348, currentTotalRowY, '/F1', 9, 22, 163, 74);
+        drawTextRight(`-${moneyFmt(fin.discount)}`, 566, currentTotalRowY, '/F1', 9, 22, 163, 74, 5.5);
+        currentTotalRowY -= 15;
+      }
+
+      drawText(`Sales Tax (${doc.taxRate}%):`, 348, currentTotalRowY, '/F1', 9, 100, 116, 139);
+      drawTextRight(moneyFmt(fin.tax), 566, currentTotalRowY, '/F1', 9, 30, 41, 59, 5.5);
+      currentTotalRowY -= 15;
+
+      setStrokeColor(203, 213, 225);
+      drawLine(348, currentTotalRowY + 9, 566, currentTotalRowY + 9);
+
+      drawText('TOTAL DUE:', 348, currentTotalRowY - 2, '/F2', 10.5, 15, 23, 42);
+      drawTextRight(moneyFmt(fin.total), 566, currentTotalRowY - 2, '/F2', 11, 15, 23, 42, 6.5);
+      currentTotalRowY -= 17;
+
+      if (isInv) {
+        drawText('Payments Applied:', 348, currentTotalRowY, '/F1', 8.5, 22, 163, 74);
+        drawTextRight(`-${moneyFmt(paid)}`, 566, currentTotalRowY, '/F2', 8.5, 22, 163, 74, 5.5);
+        currentTotalRowY -= 14;
+
+        setStrokeColor(15, 23, 42);
+        setLineWidth(1.5);
+        drawLine(348, currentTotalRowY + 7, 566, currentTotalRowY + 7);
+
+        drawText('BALANCE DUE:', 348, currentTotalRowY - 3, '/F2', 10.5, balance <= 0.009 ? 22 : 220, balance <= 0.009 ? 163 : 38, balance <= 0.009 ? 74 : 38);
+        drawTextRight(moneyFmt(balance), 566, currentTotalRowY - 3, '/F2', 11, balance <= 0.009 ? 22 : 220, balance <= 0.009 ? 163 : 38, balance <= 0.009 ? 74 : 38, 6.5);
+      }
+
+      // Left Note Box / Payment History
+      const invPayments = (state.payments || []).filter(p => p.invoiceId === doc.id);
+      if (isInv && invPayments.length > 0) {
+        setFillColor(240, 253, 244);
+        setStrokeColor(187, 247, 208);
+        drawRect(36, totalsY - 95, 280, 105, true, true);
+        drawText('PAYMENT CONFIRMATION & RECEIPTS', 48, totalsY - 12, '/F2', 8, 22, 101, 52);
+        invPayments.slice(0, 3).forEach((p, pIdx) => {
+          const pY = totalsY - 28 - (pIdx * 18);
+          drawText(`• ${dateFmt(p.date)} - ${(p.method || 'Payment').slice(0, 24)}`, 48, pY, '/F1', 8, 21, 128, 61);
+          drawTextRight(moneyFmt(p.amount), 304, pY, '/F2', 8.5, 22, 101, 52, 5);
+        });
+      } else if (doc.notes) {
+        setFillColor(248, 250, 252);
+        setStrokeColor(226, 232, 240);
+        drawRect(36, totalsY - 95, 280, 105, true, true);
+        drawText('NOTES & SPECIAL INSTRUCTIONS', 48, totalsY - 12, '/F2', 8, 100, 116, 139);
+        drawText(doc.notes.slice(0, 85), 48, totalsY - 28, '/F1', 8, 51, 65, 85);
+      }
+
+      // Terms & Guarantee Footer
+      const footerY = 70;
+      setStrokeColor(226, 232, 240);
+      setLineWidth(1);
+      drawLine(36, footerY + 30, 576, footerY + 30);
+
+      const terms = s.invoiceTerms || 'Payment is due upon receipt. All workmanship is backed by our customer satisfaction guarantee.';
+      drawText('TERMS & GUARANTEE', 36, footerY + 18, '/F2', 7.5, 100, 116, 139);
+      drawText(terms.slice(0, 125), 36, footerY + 6, '/F1', 7.5, 148, 163, 184);
+
+      drawText(`${compName} • FieldTitan Verified Document • Generated ${new Date().toLocaleDateString('en-US')}`, 36, footerY - 12, '/F1', 7, 148, 163, 184);
+      drawTextRight('Page 1 of 1', 576, footerY - 12, '/F1', 7, 148, 163, 184, 4);
+
+      // Build PDF Objects
+      const streamContent = streamOps.join('\n');
+      const streamBytes = new TextEncoder().encode(streamContent);
+      const streamLength = streamBytes.length;
+
+      const objects = [];
+      objects.push(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n`);
+      objects.push(`2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n`);
+      objects.push(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>\nendobj\n`);
+      objects.push(`4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n`);
+      objects.push(`5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n`);
+      objects.push(`6 0 obj\n<< /Length ${streamLength} >>\nstream\n${streamContent}\nendstream\nendobj\n`);
+
+      const header = `%PDF-1.4\n%\xE2\xE3\xCF\xD3\n`;
+      let currentOffset = header.length;
+      const xrefEntries = ['0000000000 65535 f \n'];
+
+      let body = '';
+      objects.forEach(obj => {
+        xrefEntries.push(String(currentOffset).padStart(10, '0') + ' 00000 n \n');
+        body += obj;
+        currentOffset += new TextEncoder().encode(obj).length;
+      });
+
+      const startXref = currentOffset;
+      const xref = `xref\n0 ${objects.length + 1}\n` + xrefEntries.join('');
+      const trailer = `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${startXref}\n%%EOF\n`;
+
+      const finalPdf = header + body + xref + trailer;
+      return new Blob([binaryStringToUint8Array(finalPdf)], { type: 'application/pdf' });
+    }
+
+    function downloadInvoicePdfFile(doc, type = 'invoice') {
+      const isInv = type === 'invoice';
+      const fin = calcFinancials(doc.items, doc.taxRate, doc.discount);
+      const paid = isInv ? getInvoicePaidAmount(doc.id) : 0;
+      const balance = isInv ? Math.max(0, fin.total - paid) : fin.total;
+
+      const pdfBlob = buildDocumentPdfBlob(doc, type);
+      const filename = `${isInv ? (balance <= 0.009 ? 'Receipt' : 'Invoice') : 'Estimate'}-${doc.number || 'doc'}.pdf`;
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 1000);
+      notify(`Downloaded ${filename}`, 'success');
+    }
+
+    function executeDownloadPdfReceipt() {
+      const type = document.getElementById('send-receipt-doc-type').value;
+      const id = document.getElementById('send-receipt-doc-id').value;
+      const isInv = type === 'invoice';
+      const doc = isInv ? state.invoices.find(i => i.id === id) : state.estimates.find(e => e.id === id);
+      if (!doc) return;
+      downloadInvoicePdfFile(doc, type);
+    }
+
+    async function uploadInvoicePdfToVault(doc, pdfBlob, type = 'invoice') {
+      if (!isGhPushReady()) return null;
+      try {
+        const isInv = type === 'invoice';
+        const filename = `${isInv ? 'Invoice' : 'Estimate'}-${doc.number || 'doc'}.pdf`;
+        const vaultPath = `vault/invoices/${doc.id}/${filename}`;
+        const owner = encodeURIComponent((ghConfig.owner || 'PlayDough1992').trim());
+        const repo = encodeURIComponent((ghConfig.repo || 'FieldTitan').trim());
+        const branch = encodeURIComponent((ghConfig.branch || 'main').trim());
+        const url = `https://api.github.com/repos/${owner}/${repo}/contents/${vaultPath}`;
+
+        const arrayBuffer = await pdfBlob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        const b64 = bytesToBase64(bytes);
+
+        let existingSha = '';
+        const headRes = await fetch(`${url}?ref=${branch}&_t=${Date.now()}`, {
+          headers: {
+            'Authorization': `Bearer ${ghConfig.token.trim()}`,
+            'Accept': 'application/vnd.github+json'
+          }
+        });
+        if (headRes.ok) {
+          const data = await headRes.json();
+          existingSha = data.sha || '';
+        }
+
+        const putBody = {
+          message: `Upload PDF receipt for ${doc.number}`,
+          content: b64,
+          branch: (ghConfig.branch || 'main').trim()
+        };
+        if (existingSha) putBody.sha = existingSha;
+
+        const putRes = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${ghConfig.token.trim()}`,
+            'Accept': 'application/vnd.github+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(putBody)
+        });
+
+        if (putRes.ok) {
+          return `https://raw.githubusercontent.com/${ghConfig.owner}/${ghConfig.repo}/${ghConfig.branch}/${vaultPath}`;
+        }
+      } catch (err) {
+        console.warn('[FieldTitan Vault] PDF vault upload notice:', err);
+      }
+      return null;
+    }
+
     function openSendReceiptModal(type, id) {
       const isInv = type === 'invoice';
       const doc = isInv ? state.invoices.find(i => i.id === id) : state.estimates.find(e => e.id === id);
@@ -4957,7 +5315,7 @@
 
       document.getElementById('send-receipt-doc-type').value = type;
       document.getElementById('send-receipt-doc-id').value = id;
-      document.getElementById('send-receipt-title').innerHTML = `<span>🧾</span> Send ${isInv ? 'Receipt & Invoice' : 'Estimate'} ${esc(doc.number)}`;
+      document.getElementById('send-receipt-title').innerHTML = `<span>🧾</span> Send ${isInv ? (balance <= 0.009 ? 'Paid Receipt' : 'Invoice') : 'Estimate'} ${esc(doc.number)}`;
       document.getElementById('send-receipt-email').value = cust?.email || '';
       document.getElementById('send-receipt-phone').value = cust?.phone || '';
 
@@ -4992,7 +5350,7 @@
       if (modal) modal.classList.remove('open');
     }
 
-    function executeSendEmailReceipt() {
+    async function executeSendEmailReceipt() {
       const type = document.getElementById('send-receipt-doc-type').value;
       const id = document.getElementById('send-receipt-doc-id').value;
       const targetEmail = (document.getElementById('send-receipt-email').value || '').trim();
@@ -5008,7 +5366,8 @@
       const balance = isInv ? Math.max(0, fin.total - paid) : fin.total;
 
       const compName = s.companyName || 'FieldTitan Service';
-      const subject = `${compName} - ${isInv ? 'Receipt & Invoice' : 'Service Estimate'} #${doc.number}`;
+      const docLabel = isInv ? (balance <= 0.009 ? 'Paid Receipt' : 'Invoice') : 'Service Estimate';
+      const subject = `${compName} - ${docLabel} #${doc.number}`;
 
       let itemsList = (doc.items || []).map(it => {
         const isHr = it.billingType === 'hourly';
@@ -5017,11 +5376,12 @@
 
       const body = `Hi ${cust ? cust.name : 'Valued Customer'},
 
-Thank you for your business with ${compName}! Here is your receipt and details for ${isInv ? 'Invoice' : 'Estimate'} #${doc.number}.
+Thank you for choosing ${compName}! Attached is your official PDF ${docLabel} #${doc.number}.
 
 ---------------------------------------
-${isInv ? 'RECEIPT & INVOICE DETAILS' : 'ESTIMATE DETAILS'}
+${isInv ? (balance <= 0.009 ? 'PAID RECEIPT DETAILS' : 'INVOICE DETAILS') : 'ESTIMATE DETAILS'}
 ---------------------------------------
+Document: #${doc.number}
 Date: ${fmtDate(doc.date)}
 Customer: ${cust ? cust.name : ''}
 ${cust?.serviceAddress ? 'Address: ' + cust.serviceAddress : ''}
@@ -5042,16 +5402,37 @@ Phone: ${s.phone || ''}
 ${s.email ? 'Email: ' + s.email : ''}
 `;
 
+      const pdfBlob = buildDocumentPdfBlob(doc, type);
+      const pdfFilename = `${isInv ? (balance <= 0.009 ? 'Receipt' : 'Invoice') : 'Estimate'}-${doc.number || 'doc'}.pdf`;
+      const pdfFile = new File([pdfBlob], pdfFilename, { type: 'application/pdf', lastModified: Date.now() });
+
+      // Mobile Web Share Level 2 with attached File
+      if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        try {
+          await navigator.share({
+            files: [pdfFile],
+            title: subject,
+            text: body
+          });
+          notify(`PDF ${pdfFilename} attached to email!`, 'success');
+          return;
+        } catch (shareErr) {
+          if (shareErr.name === 'AbortError') return;
+          console.warn('Share API notice, invoking direct fallback:', shareErr);
+        }
+      }
+
+      // Desktop / Browser Fallback:
+      downloadInvoicePdfFile(doc, type);
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(body).catch(() => {});
       }
-
       const mailtoUrl = `mailto:${encodeURIComponent(targetEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       window.open(mailtoUrl, '_blank');
-      notify(`Prepared receipt email for ${targetEmail || (cust?.email || 'customer')}!`);
+      notify(`✅ ${pdfFilename} downloaded! Email compose opened with details. Simply drag or attach the downloaded PDF.`, 'success');
     }
 
-    function executeSendSmsReceipt() {
+    async function executeSendSmsReceipt() {
       const type = document.getElementById('send-receipt-doc-type').value;
       const id = document.getElementById('send-receipt-doc-id').value;
       const targetPhone = (document.getElementById('send-receipt-phone').value || '').trim();
@@ -5071,22 +5452,43 @@ ${s.email ? 'Email: ' + s.email : ''}
 
       if (isInv) {
         if (balance <= 0.009) {
-          smsText = `Hi ${cust ? cust.name : ''}! This is ${compName}. Receipt for Invoice #${doc.number}: Paid in full (${money(fin.total)}). Thank you for your business! ${s.phone ? 'Phone: ' + s.phone : ''}`;
+          smsText = `Hi ${cust ? cust.name : ''}! Attached is your Paid Receipt for Invoice #${doc.number} from ${compName}. Total: ${money(fin.total)}. Thank you for your business! ${s.phone ? 'Phone: ' + s.phone : ''}`;
         } else {
-          smsText = `Hi ${cust ? cust.name : ''}! This is ${compName}. Invoice #${doc.number}: Total ${money(fin.total)}, Paid ${money(paid)}, Balance Due: ${money(balance)}. Thank you! ${s.phone ? 'Questions: ' + s.phone : ''}`;
+          smsText = `Hi ${cust ? cust.name : ''}! Attached is Invoice #${doc.number} from ${compName}. Total: ${money(fin.total)}, Paid: ${money(paid)}, Balance Due: ${money(balance)}. Thank you! ${s.phone ? 'Questions: ' + s.phone : ''}`;
         }
       } else {
-        smsText = `Hi ${cust ? cust.name : ''}! This is ${compName}. Here is your Estimate #${doc.number} for ${money(fin.total)}. Thank you!`;
+        smsText = `Hi ${cust ? cust.name : ''}! Attached is Estimate #${doc.number} from ${compName} for ${money(fin.total)}. Thank you! ${s.phone ? 'Questions: ' + s.phone : ''}`;
       }
 
+      const pdfBlob = buildDocumentPdfBlob(doc, type);
+      const pdfFilename = `${isInv ? (balance <= 0.009 ? 'Receipt' : 'Invoice') : 'Estimate'}-${doc.number || 'doc'}.pdf`;
+      const pdfFile = new File([pdfBlob], pdfFilename, { type: 'application/pdf', lastModified: Date.now() });
+
+      // Mobile Web Share Level 2 with attached File
+      if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        try {
+          await navigator.share({
+            files: [pdfFile],
+            title: `${compName} #${doc.number}`,
+            text: smsText
+          });
+          notify(`PDF ${pdfFilename} attached to messaging!`, 'success');
+          return;
+        } catch (shareErr) {
+          if (shareErr.name === 'AbortError') return;
+          console.warn('Share API notice, invoking direct fallback:', shareErr);
+        }
+      }
+
+      // Desktop / Fallback:
+      downloadInvoicePdfFile(doc, type);
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(smsText).catch(() => {});
       }
-
       const cleanPhone = targetPhone.replace(/[^0-9+]/g, '');
       const smsUrl = `sms:${encodeURIComponent(cleanPhone)}?body=${encodeURIComponent(smsText)}`;
       window.location.href = smsUrl;
-      notify(`SMS receipt generated for ${targetPhone || 'customer'}!`);
+      notify(`✅ ${pdfFilename} downloaded! SMS compose opened.`, 'success');
     }
 
     function executePrintPdfReceipt() {
@@ -5096,7 +5498,7 @@ ${s.email ? 'Email: ' + s.email : ''}
       printRecord(type, id);
     }
 
-    function executeNativeShareReceipt() {
+    async function executeNativeShareReceipt() {
       const type = document.getElementById('send-receipt-doc-type').value;
       const id = document.getElementById('send-receipt-doc-id').value;
       const isInv = type === 'invoice';
@@ -5110,21 +5512,133 @@ ${s.email ? 'Email: ' + s.email : ''}
       const balance = isInv ? Math.max(0, fin.total - paid) : fin.total;
 
       const compName = s.companyName || 'FieldTitan';
-      const title = `${compName} - ${isInv ? 'Invoice' : 'Estimate'} #${doc.number}`;
+      const title = `${compName} - ${isInv ? (balance <= 0.009 ? 'Paid Receipt' : 'Invoice') : 'Estimate'} #${doc.number}`;
       const text = `${compName} Receipt for ${isInv ? 'Invoice' : 'Estimate'} #${doc.number}\nCustomer: ${cust ? cust.name : ''}\nTotal: ${money(fin.total)}${isInv ? `\nPaid: ${money(paid)}\nBalance: ${money(balance)}` : ''}\nThank you for your business!`;
 
-      if (navigator.share) {
-        navigator.share({ title, text }).catch(err => {
-          console.log('Share dismissed or cancelled:', err);
-        });
-      } else {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(() => {
-            notify('Receipt details copied to clipboard!');
-          });
-        } else {
-          notify('Sharing not supported on this browser');
+      const pdfBlob = buildDocumentPdfBlob(doc, type);
+      const pdfFilename = `${isInv ? (balance <= 0.009 ? 'Receipt' : 'Invoice') : 'Estimate'}-${doc.number || 'doc'}.pdf`;
+      const pdfFile = new File([pdfBlob], pdfFilename, { type: 'application/pdf', lastModified: Date.now() });
+
+      if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        try {
+          await navigator.share({ files: [pdfFile], title, text });
+          notify(`PDF shared!`, 'success');
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
         }
+      } else if (navigator.share) {
+        try {
+          await navigator.share({ title, text });
+          notify('Receipt details shared!');
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+
+      downloadInvoicePdfFile(doc, type);
+    }
+
+    /* ==========================================================================
+       CLOUD DATABASE QUICK SYNC & DIAGNOSTICS POPUP
+       ========================================================================== */
+    function openQuickSyncModal() {
+      renderQuickSyncModal();
+      const modal = document.getElementById('quick-sync-modal');
+      if (modal) modal.classList.add('open');
+    }
+
+    function closeQuickSyncModal() {
+      const modal = document.getElementById('quick-sync-modal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function renderQuickSyncModal() {
+      const body = document.getElementById('quick-sync-body');
+      if (!body) return;
+
+      const ready = isGhPushReady();
+      const pullReady = isGhPullReady();
+      const paidCount = (state.invoices || []).filter(i => i.status === 'Paid').length;
+      const unpaidCount = (state.invoices || []).filter(i => i.status !== 'Paid').length;
+
+      body.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <div class="card" style="background:var(--bg-subtle); padding:12px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Sync Engine Status</div>
+              <div style="font-size:1.05rem; font-weight:800; display:flex; align-items:center; gap:8px; margin-top:2px;">
+                <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${ghSyncState.status === 'synced' ? 'var(--success)' : (ghSyncState.status === 'syncing' ? 'var(--warning)' : (ghSyncState.status === 'error' ? 'var(--danger)' : 'var(--text-muted)'))};"></span>
+                ${ghSyncState.status === 'synced' ? 'In Sync with Cloud' : (ghSyncState.status === 'syncing' ? 'Syncing...' : (ghSyncState.status === 'error' ? 'Sync Error' : 'Local Only'))}
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:0.75rem; color:var(--text-muted);">Last Sync</div>
+              <div style="font-size:0.85rem; font-weight:700;">${ghSyncState.lastSyncedAt || 'Not yet synced'}</div>
+            </div>
+          </div>
+
+          <div class="card" style="padding:12px;">
+            <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700; margin-bottom:8px;">Local Database Records</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.82rem;">
+              <div>Invoices: <strong>${(state.invoices || []).length}</strong> (${paidCount} Paid, ${unpaidCount} Due)</div>
+              <div>Payments: <strong>${(state.payments || []).length}</strong> recorded</div>
+              <div>Jobs: <strong>${(state.jobs || []).length}</strong> active</div>
+              <div>Customers: <strong>${(state.customers || []).length}</strong> clients</div>
+            </div>
+          </div>
+
+          <div style="font-size:0.8rem; color:var(--text-secondary); background:var(--bg-subtle); padding:10px; border-radius:8px; border:1px solid var(--border-subtle);">
+            <div><strong>Repository:</strong> ${esc(ghConfig.owner || 'PlayDough1992')}/${esc(ghConfig.repo || 'FieldTitan')} (${esc(ghConfig.branch || 'main')})</div>
+            <div style="margin-top:2px;"><strong>Push Access:</strong> ${ready ? '<span style="color:var(--success); font-weight:700;">✅ Ready (PAT Token Active)</span>' : '<span style="color:var(--danger); font-weight:700;">⚠️ Token Missing / Local Read Only</span>'}</div>
+            <div style="margin-top:2px;"><strong>Encryption:</strong> ${ghConfig.encryptionKey ? '<span style="color:var(--success); font-weight:700;">✅ Passphrase Configured</span>' : '<span style="color:var(--danger); font-weight:700;">⚠️ Passphrase Required</span>'}</div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:8px; margin-top:4px;">
+            <button type="button" onclick="executeForcePushFromModal()" class="btn btn-primary" style="width:100%; min-height:44px; font-size:0.95rem; font-weight:700;">
+              ⚡ Force Push Invoices & All Data to Cloud
+            </button>
+            <button type="button" onclick="executeForcePullFromModal()" class="btn btn-secondary" style="width:100%; min-height:42px; font-size:0.9rem;">
+              🔄 Pull & Merge from Cloud
+            </button>
+            ${currentUser && currentUser.role === 'admin' ? `
+              <button type="button" onclick="closeQuickSyncModal(); switchTab('settings');" class="btn btn-ghost btn-sm">
+                Open Full GitHub Settings &rarr;
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    async function executeForcePushFromModal() {
+      const btn = event.target;
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Encrypting & Pushing...';
+      try {
+        const ok = await pushDatabaseToGitHub(false, false, 'Manual Force Sync');
+        renderQuickSyncModal();
+        if (ok) notify(`Successfully pushed ${(state.invoices || []).length} invoices and all data to GitHub!`, 'success');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    }
+
+    async function executeForcePullFromModal() {
+      const btn = event.target;
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Pulling & Merging...';
+      try {
+        const ok = await pullDatabaseFromGitHub(false);
+        renderQuickSyncModal();
+        if (ok) notify(`Database pulled and merged! Now showing ${(state.invoices || []).length} invoices.`, 'success');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
       }
     }
 
@@ -5642,15 +6156,18 @@ ${s.email ? 'Email: ' + s.email : ''}
           discount: 0,
           notes: `${job.number}: ${job.title}. ${job.notes || ''}`.trim(),
           signature: '',
-          items: combinedItems
+          items: combinedItems,
+          updatedAt: new Date().toISOString()
         };
         state.invoices.unshift(inv);
         job.status = 'Invoiced';
+        job.updatedAt = new Date().toISOString();
         saveAppState();
         closeDrawer();
         notify(`Invoice ${inv.number} created with logged labor!`);
         switchTab('invoices');
         openInvoiceDetail(inv.id);
+        triggerImmediateDatabaseSync(`Created Invoice ${inv.number} with logged labor`);
       } else {
         const prefix = state.settings.estimatePrefix || 'EST-';
         const est = {
@@ -5666,7 +6183,8 @@ ${s.email ? 'Email: ' + s.email : ''}
           notes: `Quote for ${job.number}: ${job.title}`,
           signature: '',
           signedAt: '',
-          items: combinedItems
+          items: combinedItems,
+          updatedAt: new Date().toISOString()
         };
         state.estimates.unshift(est);
         saveAppState();
@@ -5674,6 +6192,7 @@ ${s.email ? 'Email: ' + s.email : ''}
         notify(`Estimate ${est.number} created with logged labor!`);
         switchTab('estimates');
         openEstimateDetail(est.id);
+        triggerImmediateDatabaseSync(`Created Estimate ${est.number} with logged labor`);
       }
     }
 
@@ -5823,10 +6342,12 @@ ${s.email ? 'Email: ' + s.email : ''}
         discount: 0,
         notes: `${job.number}: ${job.title}. ${job.notes || ''}`.trim(),
         signature: '',
-        items: allItems
+        items: allItems,
+        updatedAt: new Date().toISOString()
       };
       state.invoices.unshift(inv);
       job.status = 'Invoiced';
+      job.updatedAt = new Date().toISOString();
       saveAppState();
       closeDrawer();
       notify(`Created Invoice ${inv.number}`);
@@ -6166,6 +6687,7 @@ ${s.email ? 'Email: ' + s.email : ''}
       const est = state.estimates.find(e => e.id === estId);
       if (!est) return;
       est.status = 'Approved';
+      est.updatedAt = new Date().toISOString();
       const prefix = state.settings.invoicePrefix || 'INV-';
       const inv = {
         id: uid('inv'),
@@ -6179,7 +6701,8 @@ ${s.email ? 'Email: ' + s.email : ''}
         discount: est.discount || 0,
         notes: `Billed from ${est.number}. ${est.notes || ''}`.trim(),
         signature: est.signature || '',
-        items: JSON.parse(JSON.stringify(est.items || []))
+        items: JSON.parse(JSON.stringify(est.items || [])),
+        updatedAt: new Date().toISOString()
       };
       state.invoices.unshift(inv);
       saveAppState();
@@ -6187,6 +6710,7 @@ ${s.email ? 'Email: ' + s.email : ''}
       notify(`Invoice ${inv.number} created`);
       switchTab('invoices');
       openInvoiceDetail(inv.id);
+      triggerImmediateDatabaseSync(`Created Invoice ${inv.number} from Estimate ${est.number}`);
     }
 
     /* ==========================================================================
@@ -6566,12 +7090,14 @@ ${s.email ? 'Email: ' + s.email : ''}
         authCode: method.includes('Card') ? fd.get('authCode').trim() : '',
         checkNumber: method.includes('Check') ? fd.get('checkNumber').trim() : '',
         date: fd.get('date') || todayISO(),
-        memo: fd.get('memo').trim()
+        memo: fd.get('memo').trim(),
+        updatedAt: new Date().toISOString()
       });
 
       const fin = calcFinancials(inv.items, inv.taxRate, inv.discount);
       const totalPaid = getInvoicePaidAmount(inv.id);
       inv.status = totalPaid >= fin.total - 0.01 ? 'Paid' : 'Partial';
+      inv.updatedAt = new Date().toISOString();
 
       saveAppState();
       notify(`Payment of ${money(amt)} recorded!`);
@@ -6678,7 +7204,8 @@ ${s.email ? 'Email: ' + s.email : ''}
         discount: parseFloat(fd.get('discount')) || 0,
         taxRate: parseFloat(fd.get('taxRate')) || 0,
         notes: fd.get('notes').trim(),
-        items: window._draftItems || []
+        items: window._draftItems || [],
+        updatedAt: new Date().toISOString()
       };
 
       if (existingId) {
@@ -7187,6 +7714,15 @@ ${s.email ? 'Email: ' + s.email : ''}
                 <button type="button" onclick="testAndInitGitHubRepo()" class="btn btn-secondary btn-sm">Test Connection / Check DATA.json</button>
                 <button type="button" onclick="pullDatabaseFromGitHub(false)" class="btn btn-secondary btn-sm">Pull & Decrypt from GitHub</button>
                 <button type="button" onclick="pushDatabaseToGitHub(false)" class="btn btn-success btn-sm">Encrypt & Push to GitHub</button>
+              </div>
+
+              <div class="card" style="background:var(--bg-subtle); padding:12px; margin-top:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div style="font-size:0.82rem;">
+                  <strong>Database Cloud Inventory:</strong> ${state.invoices.length} Invoices (${state.payments.length} Payments, ${state.jobs.length} Jobs, ${state.customers.length} Customers)
+                </div>
+                <button type="button" onclick="pushDatabaseToGitHub(false, false, 'Force Push All Data to Cloud')" class="btn btn-primary btn-sm" style="display:inline-flex; align-items:center; gap:6px;">
+                  ⚡ Force Push All Invoices & Data to Cloud
+                </button>
               </div>
             </form>
           </div>
