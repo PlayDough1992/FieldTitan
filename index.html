@@ -979,8 +979,9 @@
           path: cleanPath,
           token: parsed.token || '',
           encryptionKey: parsed.encryptionKey || '',
-          autoPull: Boolean(parsed.autoPull),
-          autoPush: Boolean(parsed.autoPush),
+          autoPull: parsed.autoPull !== undefined ? Boolean(parsed.autoPull) : true,
+          autoPush: parsed.autoPush !== undefined ? Boolean(parsed.autoPush) : true,
+          liveSync: parsed.liveSync !== undefined ? Boolean(parsed.liveSync) : true,
           lastSha: parsed.lastSha || ''
         };
       } catch (e) {
@@ -991,8 +992,9 @@
           path: 'DATA.json',
           token: '',
           encryptionKey: '',
-          autoPull: false,
-          autoPush: false,
+          autoPull: true,
+          autoPush: true,
+          liveSync: true,
           lastSha: ''
         };
       }
@@ -1484,6 +1486,146 @@
         notify(`Connection test failed: ${err.message}`, 'error');
         if (activeTab === 'settings') renderCurrentView();
       }
+    }
+
+    /* ==========================================================================
+       REAL-TIME MULTI-DEVICE AUTO-SYNC ENGINE (AUTO-UPDATES TECHS' SCREENS)
+       ========================================================================== */
+    let liveSyncTimer = null;
+    let isCheckingRemote = false;
+
+    async function checkRemoteChangesAndAutoUpdate(force = false) {
+      if (!isGhPullReady() || isCheckingRemote || !navigator.onLine) return;
+      if (!force && ghConfig.liveSync === false) return;
+
+      isCheckingRemote = true;
+      try {
+        const headers = {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        };
+        if ((ghConfig.token || '').trim()) {
+          headers['Authorization'] = `Bearer ${ghConfig.token.trim()}`;
+        }
+
+        const res = await fetch(buildGitHubContentsUrl(true), {
+          method: 'GET',
+          cache: 'no-store',
+          headers
+        });
+
+        if (res.ok) {
+          const fileObj = await res.json();
+          const remoteSha = fileObj?.sha || '';
+
+          // If remote SHA matches our local record, remote data has NOT changed!
+          if (remoteSha && remoteSha === ghConfig.lastSha) {
+            isCheckingRemote = false;
+            return;
+          }
+
+          const decodedText = base64ToUtf8(fileObj.content || '').trim();
+          if (!decodedText || decodedText === '{}') {
+            ghConfig.lastSha = remoteSha;
+            ghSyncState.lastSha = remoteSha;
+            saveGhConfig();
+            isCheckingRemote = false;
+            return;
+          }
+
+          const parsed = await decryptDatabasePayload(decodedText, ghConfig.encryptionKey.trim());
+          if (parsed && typeof parsed === 'object' && Array.isArray(parsed.customers)) {
+            applyRemoteStateUpdate(parsed, remoteSha);
+          }
+        } else if (res.status === 403 || res.status === 429) {
+          // Tokenless / fallback endpoint
+          const rawUrl = `https://raw.githubusercontent.com/${encodeURIComponent((ghConfig.owner || '').trim())}/${encodeURIComponent((ghConfig.repo || '').trim())}/${encodeURIComponent((ghConfig.branch || 'main').trim())}/${(ghConfig.path || 'DATA.json').trim().replace(/^\/+/, '')}?_t=${Date.now()}`;
+          const rawRes = await fetch(rawUrl, { cache: 'no-store' }).catch(() => null);
+          if (rawRes && rawRes.ok) {
+            const rawContent = (await rawRes.text()).trim();
+            if (rawContent && rawContent !== '{}') {
+              const parsed = await decryptDatabasePayload(rawContent, ghConfig.encryptionKey.trim());
+              if (parsed && typeof parsed === 'object' && Array.isArray(parsed.customers)) {
+                applyRemoteStateUpdate(parsed, '');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Real-time sync check:', err.message);
+      } finally {
+        isCheckingRemote = false;
+      }
+    }
+
+    function applyRemoteStateUpdate(parsed, remoteSha) {
+      // Check if data actually changed to prevent unnecessary UI renders
+      const serializedOld = JSON.stringify(state);
+      const incomingState = {
+        ...BLANK_STATE,
+        ...parsed,
+        settings: { ...BLANK_STATE.settings, ...(parsed.settings || {}) },
+        customers: Array.isArray(parsed.customers) ? parsed.customers : [],
+        equipment: Array.isArray(parsed.equipment) ? parsed.equipment : [],
+        pricebook: Array.isArray(parsed.pricebook) ? parsed.pricebook : [],
+        estimates: Array.isArray(parsed.estimates) ? parsed.estimates : [],
+        jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
+        invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
+        payments: Array.isArray(parsed.payments) ? parsed.payments : []
+      };
+
+      if (serializedOld === JSON.stringify(incomingState)) {
+        if (remoteSha) {
+          ghConfig.lastSha = remoteSha;
+          ghSyncState.lastSha = remoteSha;
+          saveGhConfig();
+        }
+        return;
+      }
+
+      state = incomingState;
+      if (remoteSha) {
+        ghConfig.lastSha = remoteSha;
+        ghSyncState.lastSha = remoteSha;
+      }
+      ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
+      saveGhConfig();
+      saveAppState(true); // Persist locally without triggering auto-push loop
+      applyTheme();
+      updateSyncBadge('synced', `Live ${ghSyncState.lastSyncedAt}`);
+
+      // Check if technician is actively editing a form or text field in a drawer
+      const activeEl = document.activeElement;
+      const isEditing = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+      const drawerOpen = document.getElementById('drawer-backdrop')?.classList.contains('open');
+
+      if (!isEditing && !drawerOpen) {
+        renderCurrentView();
+      }
+
+      // Visual feedback on the header sync indicator
+      const dot = document.getElementById('gh-sync-dot');
+      if (dot) {
+        dot.style.transform = 'scale(1.5)';
+        setTimeout(() => { if (dot) dot.style.transform = 'scale(1)'; }, 600);
+      }
+      notify('⚡ Live sync: Schedule & team updates received!', 'info');
+    }
+
+    function startLiveSyncEngine() {
+      if (liveSyncTimer) {
+        clearInterval(liveSyncTimer);
+        liveSyncTimer = null;
+      }
+      if (!isGhPullReady() || ghConfig.liveSync === false) {
+        return;
+      }
+      // Check every 10 seconds while device is active
+      liveSyncTimer = setInterval(() => {
+        if (!document.hidden && navigator.onLine) {
+          checkRemoteChangesAndAutoUpdate();
+        }
+      }, 10000);
     }
 
     function uid(prefix = 'id') {
@@ -4272,14 +4414,18 @@
                 </div>
               </div>
 
-              <div class="grid-2" style="margin-bottom:14px;">
+              <div class="grid-2" style="margin-bottom:14px; row-gap:10px;">
                 <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:700; cursor:pointer;">
                   <input type="checkbox" name="autoPull" ${ghConfig.autoPull ? 'checked' : ''} style="width:18px; height:18px;" />
-                  Auto-Pull & Decrypt from GitHub on App Load
+                  Auto-Pull & Decrypt on App Load
                 </label>
                 <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:700; cursor:pointer;">
                   <input type="checkbox" name="autoPush" ${ghConfig.autoPush ? 'checked' : ''} style="width:18px; height:18px;" />
-                  Auto-Encrypt & Push to GitHub on Every Save
+                  Auto-Encrypt & Push on Every Save
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:700; cursor:pointer; grid-column: 1 / -1; background:var(--brand-soft); color:var(--brand-text); padding:10px 12px; border-radius:8px;">
+                  <input type="checkbox" name="liveSync" ${ghConfig.liveSync !== false ? 'checked' : ''} style="width:18px; height:18px;" />
+                  ⚡ Real-Time Team Auto-Sync (Every 10s: auto-updates dispatch schedule & jobs across all techs' screens)
                 </label>
               </div>
 
@@ -4469,11 +4615,13 @@
         token: (fd.get('token') || '').trim(),
         encryptionKey: (fd.get('encryptionKey') || '').trim(),
         autoPull: fd.get('autoPull') === 'on',
-        autoPush: fd.get('autoPush') === 'on'
+        autoPush: fd.get('autoPush') === 'on',
+        liveSync: fd.get('liveSync') === 'on'
       };
       saveGhConfig();
+      startLiveSyncEngine();
       updateSyncBadge(isGhConfigured() ? 'idle' : 'local', isGhConfigured() ? 'Configured & Encrypted' : 'Key or PAT Missing');
-      notify('GitHub repository sync & encryption settings saved!');
+      notify('GitHub repository sync & real-time auto-sync settings saved!');
       renderCurrentView();
     }
 
@@ -4846,6 +4994,24 @@
       if (ghConfig.autoPull && isGhConfigured()) {
         await pullDatabaseFromGitHub(true);
       }
+
+      // Start Real-Time Live Sync Engine (polls every 10s & auto-updates tech UI)
+      startLiveSyncEngine();
+
+      // Adaptive Real-Time Watchers: checks instantly on tab focus, phone wake-up & network reconnect
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && navigator.onLine) {
+          checkRemoteChangesAndAutoUpdate();
+        }
+      });
+      window.addEventListener('focus', () => {
+        if (navigator.onLine) {
+          checkRemoteChangesAndAutoUpdate();
+        }
+      });
+      window.addEventListener('online', () => {
+        checkRemoteChangesAndAutoUpdate();
+      });
     });
   </script>
 </body>
