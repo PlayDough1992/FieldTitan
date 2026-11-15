@@ -869,10 +869,10 @@
       payments: []     // Strictly empty []
     };
 
-    // Stored strictly in device localStorage (never written inside fsm-database.json)
+    // Stored strictly in device localStorage (never written inside DATA.json)
     let ghConfig = loadGhConfig();
     let ghSyncState = {
-      status: ghConfig.token && ghConfig.owner && ghConfig.repo ? 'idle' : 'local', // 'local' | 'idle' | 'syncing' | 'synced' | 'error'
+      status: (ghConfig.token && ghConfig.owner && ghConfig.repo && ghConfig.encryptionKey) ? 'idle' : 'local', // 'local' | 'idle' | 'syncing' | 'synced' | 'error'
       message: '',
       lastSha: ghConfig.lastSha || '',
       lastSyncedAt: ''
@@ -890,18 +890,30 @@
       try {
         const raw = localStorage.getItem(GH_CONFIG_KEY);
         const parsed = raw ? JSON.parse(raw) : {};
+        const cleanPath = (!parsed.path || parsed.path === 'fsm-database.json') ? 'DATA.json' : parsed.path;
         return {
-          owner: parsed.owner || '',
-          repo: parsed.repo || '',
+          owner: parsed.owner || 'PlayDough1992',
+          repo: parsed.repo || 'FieldTitan',
           branch: parsed.branch || 'main',
-          path: parsed.path || 'fsm-database.json',
+          path: cleanPath,
           token: parsed.token || '',
+          encryptionKey: parsed.encryptionKey || '',
           autoPull: Boolean(parsed.autoPull),
           autoPush: Boolean(parsed.autoPush),
           lastSha: parsed.lastSha || ''
         };
       } catch (e) {
-        return { owner: '', repo: '', branch: 'main', path: 'fsm-database.json', token: '', autoPull: false, autoPush: false, lastSha: '' };
+        return {
+          owner: 'PlayDough1992',
+          repo: 'FieldTitan',
+          branch: 'main',
+          path: 'DATA.json',
+          token: '',
+          encryptionKey: '',
+          autoPull: false,
+          autoPush: false,
+          lastSha: ''
+        };
       }
     }
 
@@ -953,10 +965,131 @@
     }
 
     /* ==========================================================================
-       1B. GITHUB CONTENTS API (READ & WRITE JSON DATABASE IN REPOSITORY)
+       1B. END-TO-END AES-256-GCM DATABASE ENCRYPTION / DECRYPTION ENGINE
+       ========================================================================== */
+    function bytesToBase64(bytes) {
+      let bin = '';
+      const len = bytes.byteLength;
+      const chunkSize = 0x8000;
+      for (let i = 0; i < len; i += chunkSize) {
+        const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+        bin += String.fromCharCode.apply(null, chunk);
+      }
+      return btoa(bin);
+    }
+
+    function base64ToBytes(b64) {
+      const clean = b64.replace(/\s/g, '');
+      const bin = atob(clean);
+      const len = bin.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = bin.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    async function deriveEncryptionKey(passphrase, saltBytes) {
+      const enc = new TextEncoder();
+      const keyMaterial = await window.crypto.subtle.importKey(
+        'raw',
+        enc.encode(passphrase),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+      );
+      return window.crypto.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: saltBytes,
+          iterations: 100000,
+          hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+    }
+
+    async function encryptDatabasePayload(plainObj, passphrase) {
+      if (!passphrase || !passphrase.trim()) {
+        throw new Error('Encryption Passphrase is required to encrypt DATA.json.');
+      }
+      const enc = new TextEncoder();
+      const salt = window.crypto.getRandomValues(new Uint8Array(16));
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      const key = await deriveEncryptionKey(passphrase.trim(), salt);
+      const plaintextBytes = enc.encode(JSON.stringify(plainObj));
+      const cipherBuffer = await window.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        plaintextBytes
+      );
+      return JSON.stringify({
+        _fieldtitan_encrypted: true,
+        version: 1,
+        algorithm: 'AES-256-GCM',
+        kdf: 'PBKDF2-SHA256',
+        iterations: 100000,
+        salt: bytesToBase64(salt),
+        iv: bytesToBase64(iv),
+        ciphertext: bytesToBase64(new Uint8Array(cipherBuffer)),
+        updatedAt: new Date().toISOString()
+      }, null, 2);
+    }
+
+    async function decryptDatabasePayload(rawText, passphrase) {
+      const trimmed = (rawText || '').trim();
+      if (!trimmed || trimmed === '{}') return null;
+
+      let envelope;
+      try {
+        envelope = JSON.parse(trimmed);
+      } catch (err) {
+        throw new Error('Invalid JSON format in database file.');
+      }
+
+      if (envelope && envelope._fieldtitan_encrypted && envelope.ciphertext) {
+        if (!passphrase || !passphrase.trim()) {
+          throw new Error('Encryption Passphrase is required to decrypt DATA.json.');
+        }
+        try {
+          const salt = base64ToBytes(envelope.salt);
+          const iv = base64ToBytes(envelope.iv);
+          const cipherBytes = base64ToBytes(envelope.ciphertext);
+          const key = await deriveEncryptionKey(passphrase.trim(), salt);
+          const decryptedBuffer = await window.crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv },
+            key,
+            cipherBytes
+          );
+          const decryptedText = new TextDecoder().decode(decryptedBuffer);
+          return JSON.parse(decryptedText);
+        } catch (decryptErr) {
+          throw new Error('Decryption failed: Incorrect encryption passphrase or corrupt DATA.json.');
+        }
+      }
+
+      // Legacy fallback if the file is unencrypted
+      if (envelope && typeof envelope === 'object') {
+        return envelope;
+      }
+
+      throw new Error('Unrecognized database payload format.');
+    }
+
+    /* ==========================================================================
+       1C. GITHUB CONTENTS API (READ & WRITE ENCRYPTED DATA.json IN REPOSITORY)
        ========================================================================== */
     function isGhConfigured() {
-      return Boolean(ghConfig.owner.trim() && ghConfig.repo.trim() && ghConfig.path.trim() && ghConfig.token.trim());
+      return Boolean(
+        (ghConfig.owner || '').trim() &&
+        (ghConfig.repo || '').trim() &&
+        (ghConfig.path || '').trim() &&
+        (ghConfig.token || '').trim() &&
+        (ghConfig.encryptionKey || '').trim()
+      );
     }
 
     function updateSyncBadge(status, message = '') {
@@ -968,7 +1101,11 @@
 
       if (!isGhConfigured() || status === 'local') {
         dot.style.background = 'var(--text-muted)';
-        label.textContent = 'Local Only';
+        if (ghConfig.token && !(ghConfig.encryptionKey || '').trim()) {
+          label.textContent = 'Key Required';
+        } else {
+          label.textContent = 'Local Only';
+        }
       } else if (status === 'syncing') {
         dot.style.background = 'var(--warning)';
         label.textContent = 'Syncing...';
@@ -986,34 +1123,31 @@
 
     function utf8ToBase64(str) {
       const bytes = new TextEncoder().encode(str);
-      let bin = '';
-      for (let i = 0; i < bytes.length; i++) {
-        bin += String.fromCharCode(bytes[i]);
-      }
-      return btoa(bin);
+      return bytesToBase64(bytes);
     }
 
     function base64ToUtf8(b64) {
-      const clean = b64.replace(/\s/g, '');
-      const bin = atob(clean);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) {
-        bytes[i] = bin.charCodeAt(i);
-      }
+      const bytes = base64ToBytes(b64);
       return new TextDecoder().decode(bytes);
     }
 
     function buildGitHubContentsUrl(withRef = false) {
-      const owner = encodeURIComponent(ghConfig.owner.trim());
-      const repo = encodeURIComponent(ghConfig.repo.trim());
-      const cleanPath = ghConfig.path.trim().replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+      const owner = encodeURIComponent((ghConfig.owner || '').trim());
+      const repo = encodeURIComponent((ghConfig.repo || '').trim());
+      const cleanPath = (ghConfig.path || 'DATA.json').trim().replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
       const branch = encodeURIComponent((ghConfig.branch || 'main').trim());
       return `https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}${withRef ? `?ref=${branch}&_t=${Date.now()}` : ''}`;
     }
 
     async function pullDatabaseFromGitHub(silent = false) {
       if (!isGhConfigured()) {
-        if (!silent) notify('Enter GitHub Owner, Repo, File Path, and Token first.', 'error');
+        if (!silent) {
+          if (!ghConfig.encryptionKey || !ghConfig.encryptionKey.trim()) {
+            notify('Enter Encryption Passphrase in Settings to decrypt DATA.json.', 'error');
+          } else {
+            notify('Enter GitHub Owner, Repo, File Path, Token, and Encryption Passphrase first.', 'error');
+          }
+        }
         return false;
       }
 
@@ -1039,8 +1173,18 @@
         }
 
         const fileObj = await res.json();
-        const decodedText = base64ToUtf8(fileObj.content || '');
-        const parsed = JSON.parse(decodedText);
+        const decodedText = base64ToUtf8(fileObj.content || '').trim();
+
+        if (!decodedText || decodedText === '{}') {
+          ghConfig.lastSha = fileObj.sha || '';
+          ghSyncState.lastSha = fileObj.sha || '';
+          saveGhConfig();
+          updateSyncBadge('synced', 'Remote file empty');
+          if (!silent) notify('Remote DATA.json is empty. Push to initialize your encrypted database.');
+          return true;
+        }
+
+        const parsed = await decryptDatabasePayload(decodedText, ghConfig.encryptionKey.trim());
 
         if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.customers)) {
           throw new Error('Remote JSON file does not match FieldTitan database structure.');
@@ -1065,12 +1209,12 @@
         saveGhConfig();
         saveAppState(true); // Save locally without triggering auto-push loop
         applyTheme();
-        updateSyncBadge('synced', `Pulled ${ghSyncState.lastSyncedAt}`);
-        if (!silent) notify('Database pulled from GitHub repository!');
+        updateSyncBadge('synced', `Pulled & Decrypted ${ghSyncState.lastSyncedAt}`);
+        if (!silent) notify('Database pulled and decrypted from DATA.json on GitHub!');
         renderCurrentView();
         return true;
       } catch (err) {
-        updateSyncBadge('error', err.message || 'Network or JSON parse error');
+        updateSyncBadge('error', err.message || 'Network or decryption error');
         if (!silent) notify(`Pull error: ${err.message}`, 'error');
         if (activeTab === 'settings') renderCurrentView();
         return false;
@@ -1079,7 +1223,13 @@
 
     async function pushDatabaseToGitHub(silent = false, initializeIfMissing = false) {
       if (!isGhConfigured()) {
-        if (!silent) notify('Enter GitHub Owner, Repo, File Path, and Token first.', 'error');
+        if (!silent) {
+          if (!ghConfig.encryptionKey || !ghConfig.encryptionKey.trim()) {
+            notify('Enter Encryption Passphrase in Settings before saving to DATA.json.', 'error');
+          } else {
+            notify('Enter GitHub Owner, Repo, File Path, Token, and Encryption Passphrase first.', 'error');
+          }
+        }
         return false;
       }
 
@@ -1107,12 +1257,13 @@
           throw new Error(`HTTP ${headRes.status}: ${errJson.message || headRes.statusText}`);
         }
 
-        const cleanPayload = JSON.stringify(state, null, 2);
+        // Encrypt the entire state payload with AES-256-GCM before sending
+        const encryptedPayload = await encryptDatabasePayload(state, ghConfig.encryptionKey.trim());
         const bodyObj = {
           message: initializeIfMissing
-            ? `Initialize FieldTitan FSM database (${new Date().toISOString()})`
-            : `Sync FieldTitan FSM database (${new Date().toISOString()})`,
-          content: utf8ToBase64(cleanPayload),
+            ? `Initialize encrypted FieldTitan database (${new Date().toISOString()})`
+            : `Sync encrypted FieldTitan database (${new Date().toISOString()})`,
+          content: utf8ToBase64(encryptedPayload),
           branch: (ghConfig.branch || 'main').trim()
         };
         if (currentSha) bodyObj.sha = currentSha;
@@ -1139,8 +1290,8 @@
         ghSyncState.lastSha = newSha;
         ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
         saveGhConfig();
-        updateSyncBadge('synced', `Synced ${ghSyncState.lastSyncedAt}`);
-        if (!silent) notify('Database pushed & committed to GitHub!');
+        updateSyncBadge('synced', `Encrypted & Synced ${ghSyncState.lastSyncedAt}`);
+        if (!silent) notify('Database encrypted & saved to DATA.json on GitHub!');
         if (activeTab === 'settings') renderCurrentView();
         return true;
       } catch (err) {
@@ -1153,7 +1304,11 @@
 
     async function testAndInitGitHubRepo() {
       if (!isGhConfigured()) {
-        notify('Please fill in Owner, Repository, Branch, File Path, and Fine-Grained PAT first.', 'error');
+        if (!ghConfig.encryptionKey || !ghConfig.encryptionKey.trim()) {
+          notify('Please enter an Encryption Passphrase to protect DATA.json.', 'error');
+        } else {
+          notify('Please fill in Owner, Repository, Branch, File Path, Fine-Grained PAT, and Encryption Passphrase.', 'error');
+        }
         return;
       }
       updateSyncBadge('syncing');
@@ -1175,10 +1330,10 @@
           ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
           saveGhConfig();
           updateSyncBadge('synced', 'Connected (file exists)');
-          notify('Connected! Remote database file found in repository.');
+          notify('Connected! Remote DATA.json file found in repository.');
           if (activeTab === 'settings') renderCurrentView();
         } else if (res.status === 404) {
-          notify('Database file not found in repo — initializing it now...');
+          notify('DATA.json file not found in repo — initializing encrypted file now...');
           await pushDatabaseToGitHub(false, true);
         } else {
           const errJson = await res.json().catch(() => ({}));
@@ -3736,12 +3891,12 @@
       const s = state.settings;
       return `
         <div style="display:flex; flex-direction:column; gap:18px; max-width:760px;">
-          <!-- GitHub Repository JSON Database Sync Card -->
+          <!-- GitHub Repository Encrypted JSON Database Sync Card -->
           <div class="card" style="border:2px solid var(--brand-primary);">
             <div class="card-header">
               <div>
-                <div class="card-title">GitHub Repository JSON Database Sync</div>
-                <div style="font-size:0.78rem; color:var(--text-muted);">Read & write your entire FSM database directly to a file in your GitHub repo</div>
+                <div class="card-title">GitHub Encrypted JSON Database Sync (DATA.json)</div>
+                <div style="font-size:0.78rem; color:var(--text-muted);">End-to-end AES-256 encrypted database persistence directly in your GitHub repository</div>
               </div>
               ${badge(ghSyncState.status === 'synced' ? 'Approved' : ghSyncState.status === 'error' ? 'Declined' : 'Draft')}
             </div>
@@ -3756,11 +3911,11 @@
               <div class="grid-2">
                 <div class="form-group">
                   <label class="form-label">GitHub Owner / Username *</label>
-                  <input name="owner" value="${esc(ghConfig.owner)}" required class="form-control" placeholder="e.g., your-github-username" />
+                  <input name="owner" value="${esc(ghConfig.owner)}" required class="form-control" placeholder="PlayDough1992" />
                 </div>
                 <div class="form-group">
                   <label class="form-label">Repository Name *</label>
-                  <input name="repo" value="${esc(ghConfig.repo)}" required class="form-control" placeholder="e.g., field-service-app" />
+                  <input name="repo" value="${esc(ghConfig.repo)}" required class="form-control" placeholder="FieldTitan" />
                 </div>
               </div>
 
@@ -3771,7 +3926,7 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label">Database File Path</label>
-                  <input name="path" value="${esc(ghConfig.path)}" required class="form-control" placeholder="fsm-database.json" />
+                  <input name="path" value="${esc(ghConfig.path)}" required class="form-control" placeholder="DATA.json" />
                 </div>
               </div>
 
@@ -3779,26 +3934,37 @@
                 <label class="form-label">Fine-Grained Personal Access Token (PAT) *</label>
                 <input type="password" name="token" value="${esc(ghConfig.token)}" required class="form-control" placeholder="github_pat_..." />
                 <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
-                  Stored locally on your device only (never saved inside the repo JSON). Grant <strong>Contents: Read and write</strong> permission on this repository.
+                  Stored locally on this device only (never saved inside the repo JSON). Grant <strong>Contents: Read and write</strong> permission on this repository.
+                </div>
+              </div>
+
+              <div class="form-group" style="background:var(--bg-subtle); padding:12px; border-radius:8px; border:1px solid var(--border-color);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                  <label class="form-label" style="margin:0; font-weight:800; color:var(--brand-text);">Database Encryption Passphrase / Secret Key *</label>
+                  <button type="button" onclick="toggleEncKeyVisibility()" class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.72rem;">Show/Hide</button>
+                </div>
+                <input type="password" id="gh-enc-key-input" name="encryptionKey" value="${esc(ghConfig.encryptionKey || '')}" required class="form-control" placeholder="Enter your private encryption secret" />
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
+                  🔒 <strong>Military-Grade AES-256-GCM Encryption:</strong> Every customer, invoice, job, note, photo, and signature is fully encrypted before being sent to <code>DATA.json</code> on GitHub. Decryption occurs only in this browser with this secret key.
                 </div>
               </div>
 
               <div class="grid-2" style="margin-bottom:14px;">
                 <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:700; cursor:pointer;">
                   <input type="checkbox" name="autoPull" ${ghConfig.autoPull ? 'checked' : ''} style="width:18px; height:18px;" />
-                  Auto-Pull from GitHub on App Load
+                  Auto-Pull & Decrypt from GitHub on App Load
                 </label>
                 <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:700; cursor:pointer;">
                   <input type="checkbox" name="autoPush" ${ghConfig.autoPush ? 'checked' : ''} style="width:18px; height:18px;" />
-                  Auto-Push to GitHub on Every Save
+                  Auto-Encrypt & Push to GitHub on Every Save
                 </label>
               </div>
 
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button type="submit" class="btn btn-primary btn-sm">Save GitHub Config</button>
-                <button type="button" onclick="testAndInitGitHubRepo()" class="btn btn-secondary btn-sm">Test Connection / Init File</button>
-                <button type="button" onclick="pullDatabaseFromGitHub(false)" class="btn btn-secondary btn-sm">Pull from GitHub</button>
-                <button type="button" onclick="pushDatabaseToGitHub(false)" class="btn btn-success btn-sm">Push / Save to GitHub</button>
+                <button type="submit" class="btn btn-primary btn-sm">Save Sync & Encryption Config</button>
+                <button type="button" onclick="testAndInitGitHubRepo()" class="btn btn-secondary btn-sm">Test Connection / Check DATA.json</button>
+                <button type="button" onclick="pullDatabaseFromGitHub(false)" class="btn btn-secondary btn-sm">Pull & Decrypt from GitHub</button>
+                <button type="button" onclick="pushDatabaseToGitHub(false)" class="btn btn-success btn-sm">Encrypt & Push to GitHub</button>
               </div>
             </form>
           </div>
@@ -3925,8 +4091,9 @@
             </p>
             <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
               <button type="button" onclick="downloadJsonBackup()" class="btn btn-secondary btn-sm">Download JSON Backup</button>
+              <button type="button" onclick="downloadEncryptedBackup()" class="btn btn-secondary btn-sm">Download Encrypted DATA.json</button>
               <label class="btn btn-secondary btn-sm" style="cursor:pointer;">
-                Restore JSON Backup
+                Restore JSON / DATA.json Backup
                 <input type="file" accept=".json,application/json" onchange="restoreJsonBackup(event)" style="display:none;" />
               </label>
               <button type="button" onclick="exportAccountingCsv()" class="btn btn-secondary btn-sm">Export Invoices CSV</button>
@@ -3942,18 +4109,25 @@
       const fd = new FormData(e.target);
       ghConfig = {
         ...ghConfig,
-        owner: fd.get('owner').trim(),
-        repo: fd.get('repo').trim(),
-        branch: fd.get('branch').trim() || 'main',
-        path: fd.get('path').trim() || 'fsm-database.json',
-        token: fd.get('token').trim(),
+        owner: (fd.get('owner') || '').trim() || 'PlayDough1992',
+        repo: (fd.get('repo') || '').trim() || 'FieldTitan',
+        branch: (fd.get('branch') || '').trim() || 'main',
+        path: (fd.get('path') || '').trim() || 'DATA.json',
+        token: (fd.get('token') || '').trim(),
+        encryptionKey: (fd.get('encryptionKey') || '').trim(),
         autoPull: fd.get('autoPull') === 'on',
         autoPush: fd.get('autoPush') === 'on'
       };
       saveGhConfig();
-      updateSyncBadge(isGhConfigured() ? 'idle' : 'local', 'Configuration saved');
-      notify('GitHub repository sync settings saved!');
+      updateSyncBadge(isGhConfigured() ? 'idle' : 'local', isGhConfigured() ? 'Configured & Encrypted' : 'Key or PAT Missing');
+      notify('GitHub repository sync & encryption settings saved!');
       renderCurrentView();
+    }
+
+    function toggleEncKeyVisibility() {
+      const inp = document.getElementById('gh-enc-key-input');
+      if (!inp) return;
+      inp.type = inp.type === 'password' ? 'text' : 'password';
     }
 
     function saveSettingsForm(e) {
@@ -4000,21 +4174,67 @@
       notify('JSON backup downloaded');
     }
 
+    async function downloadEncryptedBackup() {
+      if (!ghConfig.encryptionKey || !ghConfig.encryptionKey.trim()) {
+        notify('Please set an Encryption Passphrase in Settings first.', 'error');
+        return;
+      }
+      try {
+        const encrypted = await encryptDatabasePayload(state, ghConfig.encryptionKey.trim());
+        const blob = new Blob([encrypted], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `DATA.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        notify('Encrypted DATA.json snapshot downloaded');
+      } catch (err) {
+        notify(`Export error: ${err.message}`, 'error');
+      }
+    }
+
     function restoreJsonBackup(event) {
       const file = event.target.files?.[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         try {
-          const parsed = JSON.parse(e.target.result);
-          if (!parsed.settings || !Array.isArray(parsed.customers)) throw new Error('Invalid format');
+          const rawText = e.target.result;
+          let parsed;
+          let isEncrypted = false;
+          try {
+            const temp = JSON.parse(rawText);
+            if (temp && temp._fieldtitan_encrypted) {
+              isEncrypted = true;
+            } else {
+              parsed = temp;
+            }
+          } catch (err) {
+            throw new Error('File is not valid JSON.');
+          }
+
+          if (isEncrypted) {
+            let key = (ghConfig.encryptionKey || '').trim();
+            if (!key) {
+              key = prompt('This backup is encrypted with AES-256-GCM. Enter your decryption passphrase:');
+              if (!key) throw new Error('Decryption cancelled.');
+            }
+            parsed = await decryptDatabasePayload(rawText, key);
+          }
+
+          if (!parsed || !parsed.settings || !Array.isArray(parsed.customers)) {
+            throw new Error('Invalid FieldTitan database format');
+          }
           state = { ...BLANK_STATE, ...parsed };
-          saveAppState();
+          saveAppState(true);
           applyTheme();
-          notify('Backup restored successfully');
+          notify('Backup restored successfully' + (isEncrypted ? ' (decrypted)!' : '!'));
           renderCurrentView();
         } catch (err) {
-          notify('Invalid JSON backup file', 'error');
+          notify(`Restore error: ${err.message}`, 'error');
         }
       };
       reader.readAsText(file);
