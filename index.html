@@ -854,6 +854,7 @@
         invoiceTerms: 'Payment due upon completion. Thank you for your business!',
         // Payment Gateway & Tap-to-Pay / Wallet Configuration
         stripePaymentLink: '',
+        stripeEndpointUrl: 'https://fieldtitan-pay.tjsrservices26.workers.dev',
         squareCheckoutUrl: '',
         venmoHandle: '',
         zelleHandle: '',
@@ -3340,9 +3341,14 @@
 
           <!-- Take Payment CTA -->
           ${balance > 0.009 ? `
-            <button onclick="openTakePaymentModal('${inv.id}')" class="btn btn-success" style="width:100%; font-size:1rem; min-height:50px;">
-              Take Payment (${money(balance)} Due)
-            </button>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <button type="button" onclick="createDynamicStripeCheckout('${inv.id}')" class="btn btn-primary" style="width:100%; font-size:1rem; min-height:48px;" id="btn-stripe-dyn-detail-${inv.id}">
+                💳 Pay ${money(balance)} with Stripe (Apple Pay / Card) &nearr;
+              </button>
+              <button type="button" onclick="openTakePaymentModal('${inv.id}')" class="btn btn-success" style="width:100%; font-size:0.95rem; min-height:44px;">
+                Record Other Payment / Manual Card
+              </button>
+            </div>
           ` : `
             <div class="card" style="background:var(--success-soft); border-color:var(--success); text-align:center; color:var(--success); font-weight:800;">
               Invoice Paid in Full
@@ -3421,16 +3427,17 @@
           <!-- Card Terminal / Gateway Section -->
           <div id="pay-sec-card" class="card" style="margin-bottom:14px; background:var(--bg-subtle);">
             <div class="form-label">Card Reader / Gateway Checkout</div>
-            ${(s.stripePaymentLink || s.squareCheckoutUrl) ? `
-              <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-                ${s.stripePaymentLink ? `<a href="${esc(s.stripePaymentLink)}" target="_blank" class="btn btn-primary btn-sm">Open Stripe Payment Link &nearr;</a>` : ''}
-                ${s.squareCheckoutUrl ? `<a href="${esc(s.squareCheckoutUrl)}" target="_blank" class="btn btn-primary btn-sm">Open Square Checkout &nearr;</a>` : ''}
-              </div>
-            ` : `
-              <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">
-                Tip: Add your Stripe Payment Link or Square Checkout URL in <strong>Company & Backup</strong> settings to launch tap/card checkout right from here.
-              </p>
-            `}
+            <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+              <button type="button" onclick="createDynamicStripeCheckout('${inv.id}')" class="btn btn-primary btn-sm" id="btn-stripe-dyn-term-${inv.id}" style="font-weight:800; font-size:0.875rem;">
+                💳 Launch Exact Stripe Checkout (${money(balance)}) &nearr;
+              </button>
+              ${(s.stripePaymentLink || s.squareCheckoutUrl) ? `
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                  ${s.stripePaymentLink ? `<a href="${esc(s.stripePaymentLink)}" target="_blank" class="btn btn-secondary btn-sm">Static Stripe Link &nearr;</a>` : ''}
+                  ${s.squareCheckoutUrl ? `<a href="${esc(s.squareCheckoutUrl)}" target="_blank" class="btn btn-secondary btn-sm">Square Checkout &nearr;</a>` : ''}
+                </div>
+              ` : ''}
+            </div>
             <div class="grid-3">
               <div class="form-group" style="margin:0;">
                 <label class="form-label">Card Brand</label>
@@ -3493,6 +3500,72 @@
       `;
 
       openDrawer(`Payment Terminal — ${inv.number}`, body, footer);
+    }
+
+    async function createDynamicStripeCheckout(invId) {
+      const inv = state.invoices.find(i => i.id === invId);
+      if (!inv) return;
+      const cust = getCustomer(inv.customerId);
+      const fin = calcFinancials(inv.items, inv.taxRate, inv.discount);
+      const invPayments = state.payments.filter(p => p.invoiceId === inv.id);
+      const paid = invPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+      const balance = Math.max(0, fin.total - paid);
+
+      if (balance <= 0) {
+        notify('This invoice is already paid in full.', 'error');
+        return;
+      }
+
+      const endpoint = (state.settings.stripeEndpointUrl || 'https://fieldtitan-pay.tjsrservices26.workers.dev').trim();
+      if (!endpoint) {
+        notify('Stripe Checkout Worker URL is not configured.', 'error');
+        return;
+      }
+
+      notify('Generating live Stripe Checkout session for ' + money(balance) + '...');
+      const btns = [
+        document.getElementById(`btn-stripe-dyn-detail-${inv.id}`),
+        document.getElementById(`btn-stripe-dyn-term-${inv.id}`)
+      ].filter(Boolean);
+
+      btns.forEach(b => {
+        b.disabled = true;
+        b.dataset.origText = b.textContent;
+        b.textContent = 'Generating Stripe Link...';
+      });
+
+      try {
+        const cleanUrl = endpoint.replace(/\/+$/, '');
+        const res = await fetch(cleanUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: balance.toFixed(2),
+            invoiceNumber: inv.number,
+            customerName: cust ? cust.name : 'Valued Customer',
+            customerEmail: cust ? (cust.email || '') : ''
+          })
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        if (data.url) {
+          notify('Opening Stripe Checkout in new window...');
+          window.open(data.url, '_blank');
+        } else {
+          throw new Error('No checkout URL returned from Stripe bridge.');
+        }
+      } catch (err) {
+        notify(`Stripe Error: ${err.message}`, 'error');
+      } finally {
+        btns.forEach(b => {
+          b.disabled = false;
+          if (b.dataset.origText) b.textContent = b.dataset.origText;
+        });
+      }
     }
 
     function togglePaymentMethodFields(method) {
@@ -4099,9 +4172,16 @@
             <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
               Connect your existing payment links and handles so the Invoice Payment Terminal can launch card checkout or show customer QR/handles on-site.
             </p>
+            <div class="form-group" style="background:var(--bg-subtle); padding:12px; border-radius:8px; border:1px solid var(--border-color); margin-bottom:12px;">
+              <label class="form-label" style="font-weight:800; color:var(--brand-text);">Stripe Dynamic Checkout Worker URL (Cloudflare)</label>
+              <input name="stripeEndpointUrl" type="url" value="${esc(s.stripeEndpointUrl || 'https://fieldtitan-pay.tjsrservices26.workers.dev')}" class="form-control" placeholder="https://fieldtitan-pay.tjsrservices26.workers.dev" />
+              <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
+                ⚡ <strong>Exact-Price Dynamic Invoicing:</strong> Automatically generates live Stripe checkout links with the exact balance due, customer info, and invoice number.
+              </div>
+            </div>
             <div class="grid-2">
               <div class="form-group">
-                <label class="form-label">Stripe Payment Link URL</label>
+                <label class="form-label">Static Stripe Payment Link (Optional)</label>
                 <input name="stripePaymentLink" type="url" value="${esc(s.stripePaymentLink)}" class="form-control" placeholder="https://buy.stripe.com/..." />
               </div>
               <div class="form-group">
@@ -4201,6 +4281,7 @@
         estimatePrefix: fd.get('estimatePrefix').trim() || 'EST-',
         invoicePrefix: fd.get('invoicePrefix').trim() || 'INV-',
         stripePaymentLink: fd.get('stripePaymentLink').trim(),
+        stripeEndpointUrl: fd.get('stripeEndpointUrl').trim() || 'https://fieldtitan-pay.tjsrservices26.workers.dev',
         squareCheckoutUrl: fd.get('squareCheckoutUrl').trim(),
         venmoHandle: fd.get('venmoHandle').trim(),
         zelleHandle: fd.get('zelleHandle').trim(),
@@ -4503,6 +4584,17 @@
       syncBrandHeaders();
       updateSyncBadge(isGhConfigured() ? 'idle' : 'local');
       switchTab('dashboard');
+
+      // Check for Stripe Checkout return
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('payment') === 'success') {
+        notify('Stripe payment completed successfully!', 'success');
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else if (urlParams.get('payment') === 'cancelled') {
+        notify('Stripe checkout was cancelled.', 'warning');
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
       if (ghConfig.autoPull && isGhConfigured()) {
         await pullDatabaseFromGitHub(true);
       }
