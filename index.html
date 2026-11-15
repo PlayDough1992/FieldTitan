@@ -2440,7 +2440,7 @@
       return `https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}${withRef ? `?ref=${branch}&_t=${Date.now()}` : ''}`;
     }
 
-    async function pullDatabaseFromGitHub(silent = false) {
+    async function pullDatabaseFromGitHub(silent = false, isInternalMerge = false) {
       if (!isGhPullReady()) {
         if (!silent) {
           if (!ghConfig.encryptionKey || !ghConfig.encryptionKey.trim()) {
@@ -2452,7 +2452,7 @@
         return false;
       }
 
-      updateSyncBadge('syncing');
+      if (!isInternalMerge) updateSyncBadge('syncing');
       try {
         const headers = {
           'Accept': 'application/vnd.github+json',
@@ -2493,11 +2493,11 @@
               applyTheme();
               syncCurrentUserSession();
               migrateAndLinkJobAssignments();
-              updateSyncBadge('synced', `Pulled & Decrypted ${ghSyncState.lastSyncedAt}`);
+              if (!isInternalMerge) updateSyncBadge('synced', `Pulled & Decrypted ${ghSyncState.lastSyncedAt}`);
               if (!silent) notify('Database pulled and merged from public DATA.json on GitHub!', 'success');
-              renderCurrentView();
+              if (!isInternalMerge) renderCurrentView();
 
-              if ((hasUnpushedInvoices || hasUnpushedPayments) && isGhPushReady()) {
+              if (!isInternalMerge && (hasUnpushedInvoices || hasUnpushedPayments) && isGhPushReady()) {
                 console.log('[FieldTitan Sync] Unpushed local invoices/payments detected; pushing merged database to cloud...');
                 setTimeout(() => {
                   pushDatabaseToGitHub(true, false, 'Auto-sync merged local records to cloud');
@@ -2509,9 +2509,11 @@
 
           const errJson = await res.json().catch(() => ({}));
           const detail = `HTTP ${res.status}: ${errJson.message || res.statusText}`;
-          updateSyncBadge('error', detail);
-          if (!silent) notify(`GitHub Pull Failed (${detail})`, 'error');
-          if (activeTab === 'settings') renderCurrentView();
+          if (!isInternalMerge) {
+            updateSyncBadge('error', detail);
+            if (!silent) notify(`GitHub Pull Failed (${detail})`, 'error');
+            if (activeTab === 'settings') renderCurrentView();
+          }
           return false;
         }
 
@@ -2522,7 +2524,7 @@
           ghConfig.lastSha = fileObj.sha || '';
           ghSyncState.lastSha = fileObj.sha || '';
           saveGhConfig();
-          updateSyncBadge('synced', 'Remote file empty');
+          if (!isInternalMerge) updateSyncBadge('synced', 'Remote file empty');
           if (!silent) notify('Remote DATA.json is empty. Push to initialize your encrypted database.');
           return true;
         }
@@ -2549,11 +2551,11 @@
         applyTheme();
         syncCurrentUserSession();
         migrateAndLinkJobAssignments();
-        updateSyncBadge('synced', `Pulled & Synced ${ghSyncState.lastSyncedAt}`);
+        if (!isInternalMerge) updateSyncBadge('synced', `Pulled & Synced ${ghSyncState.lastSyncedAt}`);
         if (!silent) notify('Database pulled and merged from DATA.json on GitHub!', 'success');
-        renderCurrentView();
+        if (!isInternalMerge) renderCurrentView();
 
-        if ((hasUnpushedInvoices || hasUnpushedPayments) && isGhPushReady()) {
+        if (!isInternalMerge && (hasUnpushedInvoices || hasUnpushedPayments) && isGhPushReady()) {
           console.log('[FieldTitan Sync] Unpushed local invoices/payments detected; pushing merged database to cloud...');
           setTimeout(() => {
             pushDatabaseToGitHub(true, false, 'Auto-sync merged local records to cloud');
@@ -2561,9 +2563,11 @@
         }
         return true;
       } catch (err) {
-        updateSyncBadge('error', err.message || 'Network or decryption error');
-        if (!silent) notify(`Pull error: ${err.message}`, 'error');
-        if (activeTab === 'settings') renderCurrentView();
+        if (!isInternalMerge) {
+          updateSyncBadge('error', err.message || 'Network or decryption error');
+          if (!silent) notify(`Pull error: ${err.message}`, 'error');
+          if (activeTab === 'settings') renderCurrentView();
+        }
         return false;
       }
     }
@@ -2673,7 +2677,10 @@
       }
     }
 
-    async function pushDatabaseToGitHub(silent = false, initializeIfMissing = false, commitMessage = '') {
+    let isDatabasePushing = false;
+    let pendingDatabasePush = null;
+
+    async function pushDatabaseToGitHub(silent = false, initializeIfMissing = false, commitMessage = '', retryAttempt = 0) {
       if (!isGhPullReady()) {
         if (!silent) notify('Enter Encryption Passphrase in Settings first.', 'error');
         return false;
@@ -2686,9 +2693,26 @@
         return false;
       }
 
-      updateSyncBadge('syncing');
+      // Mutex Lock: If another push is already running, queue this request
+      if (isDatabasePushing && retryAttempt === 0) {
+        console.log('[FieldTitan Sync] Push in progress; queuing pending push request...');
+        if (pendingDatabasePush) {
+          pendingDatabasePush = {
+            silent: pendingDatabasePush.silent && silent,
+            initializeIfMissing: pendingDatabasePush.initializeIfMissing || initializeIfMissing,
+            commitMessage: commitMessage || pendingDatabasePush.commitMessage
+          };
+        } else {
+          pendingDatabasePush = { silent, initializeIfMissing, commitMessage };
+        }
+        return true;
+      }
+
+      isDatabasePushing = true;
+      updateSyncBadge('syncing', retryAttempt > 0 ? `Resolving conflict (${retryAttempt + 1}/3)...` : 'Syncing...');
+
       try {
-        // Always fetch latest SHA first to prevent 409 SHA mismatch conflicts
+        // Always fetch latest SHA first with cache buster to prevent 409 SHA mismatch conflicts
         let currentSha = ghConfig.lastSha || '';
         const headRes = await fetch(buildGitHubContentsUrl(true), {
           method: 'GET',
@@ -2756,6 +2780,24 @@
           if (putRes.status === 401) {
             throw new Error('GitHub PAT token is invalid or expired (Bad credentials). Please update your token in Settings or Quick Sync.');
           }
+
+          // Automatic 409 Conflict Self-Healing:
+          // If GitHub returns 409 Conflict (e.g. SHA mismatch due to concurrent commit),
+          // extract the new SHA, merge remote changes, and retry automatically up to 3 times.
+          if (putRes.status === 409 && retryAttempt < 3) {
+            console.warn(`[FieldTitan Sync] 409 SHA conflict encountered. Retrying with remote merge (attempt ${retryAttempt + 1} of 3)...`);
+            const remoteShaMatch = errJson.message && errJson.message.match(/is at ([a-f0-9]{40})/i);
+            if (remoteShaMatch && remoteShaMatch[1]) {
+              ghConfig.lastSha = remoteShaMatch[1];
+            }
+            // Wait exponential backoff (300ms, 600ms, 900ms)
+            await new Promise(r => setTimeout(r, 300 * (retryAttempt + 1)));
+            // Pull & merge the remote changes so no data is overwritten
+            await pullDatabaseFromGitHub(true, true);
+            isDatabasePushing = false;
+            return await pushDatabaseToGitHub(silent, initializeIfMissing, commitMessage, retryAttempt + 1);
+          }
+
           throw new Error(`HTTP ${putRes.status}: ${errJson.message || putRes.statusText}`);
         }
 
@@ -2763,10 +2805,12 @@
         const newSha = putData?.content?.sha || '';
         ghConfig.lastSha = newSha;
         ghSyncState.lastSha = newSha;
+        ghSyncState.status = 'synced';
+        ghSyncState.message = '';
         ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
         saveGhConfig();
         updateSyncBadge('synced', `Encrypted & Synced ${ghSyncState.lastSyncedAt}`);
-        if (!silent) notify('Database encrypted & saved to DATA.json on GitHub!');
+        if (!silent) notify('Database encrypted & saved to DATA.json on GitHub!', 'success');
         if (activeTab === 'settings') renderCurrentView();
         return true;
       } catch (err) {
@@ -2775,6 +2819,15 @@
         if (!silent) notify(`GitHub Sync Error: ${err.message}`, 'error');
         if (activeTab === 'settings') renderCurrentView();
         return false;
+      } finally {
+        isDatabasePushing = false;
+        if (pendingDatabasePush) {
+          const next = pendingDatabasePush;
+          pendingDatabasePush = null;
+          setTimeout(() => {
+            pushDatabaseToGitHub(next.silent, next.initializeIfMissing, next.commitMessage);
+          }, 150);
+        }
       }
     }
 
@@ -6025,7 +6078,8 @@ ${s.email ? 'Email: ' + s.email : ''}
           path: (ghConfig.path || 'DATA.json').trim(),
           updatedAt: new Date().toISOString()
         };
-        saveAppState(false);
+        clearTimeout(autoPushTimer);
+        saveAppState(true);
 
         if (btn) btn.textContent = 'Broadcasting to Cloud Vault...';
         const ok = await pushDatabaseToGitHub(false, false, 'Broadcast updated GitHub token from Quick Sync');
@@ -8977,7 +9031,8 @@ ${s.email ? 'Email: ' + s.email : ''}
         path: newPath,
         updatedAt: new Date().toISOString()
       };
-      saveAppState(false);
+      clearTimeout(autoPushTimer);
+      saveAppState(true);
 
       startLiveSyncEngine();
       updateSyncBadge(isGhConfigured() ? 'idle' : 'local', isGhConfigured() ? 'Configured & Encrypted' : 'Key or PAT Missing');
@@ -9394,7 +9449,7 @@ ${s.email ? 'Email: ' + s.email : ''}
 
       // Register PWA Service Worker for Offline-First Capability & Home Screen Install
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js').catch((err) => {
+        navigator.serviceWorker.register('./sw.js?v=13').catch((err) => {
           console.warn('Service worker registration error:', err);
         });
       }
