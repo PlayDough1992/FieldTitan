@@ -1276,8 +1276,9 @@
         return false;
       }
       if (!isGhPushReady()) {
+        updateSyncBadge('local', 'PAT required to push');
         if (!silent) {
-          notify('GitHub API requires an Access Token to commit directly from the browser. To save without a token, use "Download Encrypted DATA.json" and commit with git.', 'error');
+          notify('GitHub API requires a Personal Access Token to commit to your repo from the browser. Go to Settings -> Personal Access Token to add it, or download the encrypted backup.', 'error');
         }
         return false;
       }
@@ -1377,8 +1378,13 @@
           ghSyncState.lastSha = meta.sha || '';
           ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
           saveGhConfig();
-          updateSyncBadge('synced', 'Connected (public file found)');
-          notify('Connected! Public DATA.json found in repository.');
+          if (meta.size <= 1) {
+            updateSyncBadge(isGhPushReady() ? 'synced' : 'local', 'DATA.json exists (empty)');
+            notify('Connected! DATA.json found in repo, but it is currently empty. Enter your Personal Access Token and click "Encrypt & Push to GitHub" to save your database.');
+          } else {
+            updateSyncBadge('synced', 'Connected (public file found)');
+            notify('Connected! Public DATA.json found in repository.');
+          }
           if (activeTab === 'settings') renderCurrentView();
         } else if (res.status === 404) {
           if (isGhPushReady()) {
@@ -1405,6 +1411,11 @@
     function todayISO() {
       const d = new Date();
       return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    }
+
+    function getDirectionsUrl(address) {
+      if (!address) return '#';
+      return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving&dir_action=navigate`;
     }
 
     function money(n) {
@@ -1799,8 +1810,8 @@
                           </div>
                         ` : ''}
                         ${c.serviceAddress ? `
-                          <a href="https://maps.google.com/?q=${encodeURIComponent(c.serviceAddress)}" target="_blank" style="color:var(--brand-primary); text-decoration:none; font-weight:600;">
-                            Map: ${esc(c.serviceAddress)}
+                          <a href="${getDirectionsUrl(c.serviceAddress)}" target="_blank" style="color:var(--brand-primary); text-decoration:none; font-weight:600; display:inline-flex; align-items:center; gap:4px;">
+                            🧭 Navigate: ${esc(c.serviceAddress)}
                           </a>
                         ` : ''}
                         ${c.gateCode ? `<div style="color:var(--warning); font-weight:700; font-size:0.8rem;">Access / Gate: ${esc(c.gateCode)}</div>` : ''}
@@ -1961,7 +1972,7 @@
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
               ${c.phone ? `<a href="tel:${esc(c.phone)}" class="btn btn-success btn-sm">Call ${esc(c.phone)}</a>` : ''}
               ${c.phone ? `<a href="sms:${esc(c.phone)}?body=${onMyWayBody}" class="btn btn-secondary btn-sm">Text "On My Way"</a>` : ''}
-              ${c.serviceAddress ? `<a href="https://maps.google.com/?q=${encodeURIComponent(c.serviceAddress)}" target="_blank" class="btn btn-secondary btn-sm">Google Maps</a>` : ''}
+              ${c.serviceAddress ? `<a href="${getDirectionsUrl(c.serviceAddress)}" target="_blank" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:4px;">🧭 Google Maps Navigation</a>` : ''}
             </div>
 
             <div style="margin-top:12px; font-size:0.85rem; display:flex; flex-direction:column; gap:4px;">
@@ -2222,10 +2233,12 @@
               <div style="font-size:0.82rem; color:var(--text-secondary); margin-top:2px;">
                 Customer: <strong>${esc(cust ? cust.name : 'Unassigned')}</strong>
                 ${job.assignedTech ? ` • Tech: <strong>${esc(job.assignedTech)}</strong>` : ''}
+                ${cust?.serviceAddress ? `<div style="margin-top:2px; color:var(--text-muted); font-size:0.78rem;">📍 ${esc(cust.serviceAddress)}</div>` : ''}
               </div>
             </div>
 
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              ${cust?.serviceAddress ? `<a href="${getDirectionsUrl(cust.serviceAddress)}" target="_blank" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:4px;">🧭 Navigate</a>` : ''}
               <button onclick="openJobDetail('${job.id}')" class="btn btn-primary btn-sm">Open Work Order</button>
               <button onclick="convertJobToInvoice('${job.id}')" class="btn btn-success btn-sm">Invoice</button>
             </div>
@@ -2415,7 +2428,7 @@
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
               ${cust?.phone ? `<a href="tel:${esc(cust.phone)}" class="btn btn-success btn-sm">Call</a>` : ''}
               ${cust?.phone ? `<a href="sms:${esc(cust.phone)}?body=${smsMsg}" class="btn btn-secondary btn-sm">SMS "On My Way"</a>` : ''}
-              ${cust?.serviceAddress ? `<a href="https://maps.google.com/?q=${encodeURIComponent(cust.serviceAddress)}" target="_blank" class="btn btn-secondary btn-sm">Navigate</a>` : ''}
+              ${cust?.serviceAddress ? `<a href="${getDirectionsUrl(cust.serviceAddress)}" target="_blank" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:4px;">🧭 Navigate (Turn-by-Turn)</a>` : ''}
             </div>
             ${cust?.gateCode ? `<div style="margin-top:8px; font-size:0.8rem; color:var(--warning); font-weight:700;">Access Code: ${esc(cust.gateCode)}</div>` : ''}
           </div>
@@ -4055,10 +4068,10 @@
               </div>
 
               <div class="form-group">
-                <label class="form-label">Personal Access Token (PAT) <span style="font-weight:normal; color:var(--text-muted);">(Optional for Pull, Required for In-Browser Commit)</span></label>
-                <input type="password" name="token" value="${esc(ghConfig.token)}" class="form-control" placeholder="github_pat_... (optional for public repo)" />
+                <label class="form-label">GitHub Personal Access Token (PAT) <span style="font-weight:normal; color:var(--text-muted);">(Required to commit/save to GitHub from browser)</span></label>
+                <input type="password" name="token" value="${esc(ghConfig.token)}" class="form-control" placeholder="ghp_... or github_pat_..." />
                 <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
-                  Since this repository is public, <strong>no access token is needed to pull or decrypt DATA.json</strong>. A token is only required if you want this browser app to commit/push directly to GitHub.
+                  Reading from public GitHub is free and tokenless. But to <strong>commit / save changes</strong> to <code>DATA.json</code> directly from your phone or browser, GitHub requires a Personal Access Token with <code>repo</code> access. Create one at <a href="https://github.com/settings/tokens/new" target="_blank" style="color:var(--brand-primary); font-weight:700;">github.com/settings/tokens</a>.
                 </div>
               </div>
 
