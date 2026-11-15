@@ -1258,6 +1258,150 @@
     </div>
   </div>
 
+  <!-- 6. Scrap Sold Payout Modal with Mandatory Photo Proof -->
+  <div id="scrap-log-modal" class="modal-overlay">
+    <div class="modal-box" style="max-width:480px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="font-size:1.15rem; font-weight:800; margin:0; display:flex; align-items:center; gap:6px;">
+          <span>♻️</span> Log Scrap Sold & Payout
+        </h3>
+        <button onclick="closeScrapLogModal()" class="btn btn-secondary btn-icon" style="padding:4px 8px;">✕</button>
+      </div>
+
+      <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
+        Record scrap metal or materials turned in from this job. <strong>A photo of the scrap yard receipt / scale ticket is strictly mandatory</strong> before this entry can be accepted.
+      </p>
+
+      <form id="scrap-log-form" onsubmit="submitScrapLogForm(event)">
+        <input type="hidden" id="scrap-log-job-id" value="" />
+
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label">Total Money Received ($) *</label>
+            <input type="number" step="0.01" min="0.01" id="scrap-log-amount" required class="form-control" placeholder="0.00" style="font-size:1.1rem; font-weight:800; color:var(--success);" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Date Turned In *</label>
+            <input type="date" id="scrap-log-date" required class="form-control" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Material(s) Description *</label>
+          <input type="text" id="scrap-log-desc" required class="form-control" placeholder="e.g. Copper pipe, brass fittings, iron, aluminum, compressors" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Scrap Yard / Recycler Name</label>
+          <input type="text" id="scrap-log-yard" class="form-control" placeholder="e.g. Capital City Recycling / Advantage Metals" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Additional Notes</label>
+          <textarea id="scrap-log-notes" class="form-control" rows="2" placeholder="e.g. Weight: 84 lbs #1 copper @ $3.40/lb + 200 lbs iron"></textarea>
+        </div>
+
+        <!-- Mandatory Photo Section -->
+        <div class="form-group" style="background:var(--bg-subtle); padding:12px; border-radius:10px; border:1px solid var(--border-color);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <label class="form-label" style="margin:0; font-weight:800;">
+              Scale Ticket / Receipt Photo *
+            </label>
+            <span class="badge badge-warning" id="scrap-receipt-status-badge">Required</span>
+          </div>
+
+          <input type="file" id="scrap-receipt-file-input" accept="image/*" capture="environment" onchange="onScrapReceiptFileSelected(this)" style="display:none;" />
+
+          <div id="scrap-receipt-upload-placeholder" onclick="document.getElementById('scrap-receipt-file-input').click()" style="border:2px dashed var(--border-color); border-radius:8px; padding:18px; text-align:center; cursor:pointer; background:var(--bg-surface); transition:all 0.15s ease;">
+            <div style="font-size:1.8rem; margin-bottom:4px;">📷</div>
+            <div style="font-weight:700; font-size:0.9rem; color:var(--brand-primary);">Take Photo or Upload Scrap Ticket</div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Camera will open on mobile devices</div>
+          </div>
+
+          <!-- Preview Container (hidden until image chosen) -->
+          <div id="scrap-receipt-preview-container" style="display:none; position:relative; margin-top:8px; border-radius:8px; overflow:hidden; border:1px solid var(--border-color); background:#000; text-align:center;">
+            <img id="scrap-receipt-preview-img" src="" alt="Receipt Preview" style="max-height:180px; max-width:100%; object-fit:contain;" />
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:var(--bg-subtle); border-top:1px solid var(--border-subtle); font-size:0.78rem;">
+              <span id="scrap-receipt-filename" style="color:var(--text-secondary); font-weight:600;">receipt.jpg</span>
+              <button type="button" onclick="document.getElementById('scrap-receipt-file-input').click()" class="btn btn-secondary btn-sm" style="padding:2px 8px; font-size:0.72rem;">Retake / Change</button>
+            </div>
+          </div>
+
+          <div style="font-size:0.72rem; color:var(--danger); font-weight:600; margin-top:6px;" id="scrap-receipt-warning-text">
+            ⚠️ System strictly requires receipt/scale ticket picture before saving.
+          </div>
+        </div>
+
+        <div id="scrap-log-progress" style="display:none; font-size:0.8rem; color:var(--brand-primary); font-weight:700; margin-bottom:12px;">
+          🔒 Encrypting scale ticket photo & saving scrap log...
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:12px;">
+          <button type="button" onclick="closeScrapLogModal()" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="scrap-log-submit-btn" class="btn btn-success">✅ Save Scrap Log</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 7. Send PDF Receipt & Invoice Dispatch Modal -->
+  <div id="send-receipt-modal" class="modal-overlay">
+    <div class="modal-box" style="max-width:500px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 id="send-receipt-title" style="font-size:1.15rem; font-weight:800; margin:0; display:flex; align-items:center; gap:6px;">
+          <span>🧾</span> Send PDF Receipt & Invoice
+        </h3>
+        <button onclick="closeSendReceiptModal()" class="btn btn-secondary btn-icon" style="padding:4px 8px;">✕</button>
+      </div>
+
+      <input type="hidden" id="send-receipt-doc-type" value="invoice" />
+      <input type="hidden" id="send-receipt-doc-id" value="" />
+
+      <!-- Recipient & Balance Card -->
+      <div id="send-receipt-summary-card" class="card" style="background:var(--bg-subtle); padding:12px; margin-bottom:14px;">
+        <!-- Filled dynamically -->
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Registered Customer Email</label>
+        <div style="display:flex; gap:8px;">
+          <input type="email" id="send-receipt-email" class="form-control" placeholder="customer@email.com" />
+          <button type="button" onclick="executeSendEmailReceipt()" class="btn btn-primary" style="white-space:nowrap; display:inline-flex; align-items:center; gap:6px;">
+            📧 Send Email
+          </button>
+        </div>
+        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
+          Generates an itemized receipt with invoice breakdown, payment status, and terms directly to their email.
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-top:10px;">
+        <label class="form-label">Registered Customer Phone (SMS)</label>
+        <div style="display:flex; gap:8px;">
+          <input type="tel" id="send-receipt-phone" class="form-control" placeholder="(555) 000-0000" />
+          <button type="button" onclick="executeSendSmsReceipt()" class="btn btn-secondary" style="white-space:nowrap; display:inline-flex; align-items:center; gap:6px;">
+            📱 Send SMS
+          </button>
+        </div>
+        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
+          Sends an instant SMS text receipt with total paid, balance, and itemized confirmation.
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border-subtle); padding-top:14px; margin-top:14px; display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; gap:8px;">
+          <button type="button" onclick="executePrintPdfReceipt()" class="btn btn-secondary" style="flex:1; display:inline-flex; align-items:center; justify-content:center; gap:6px;">
+            🖨️ Print / Save PDF
+          </button>
+          <button type="button" onclick="executeNativeShareReceipt()" class="btn btn-secondary" style="flex:1; display:inline-flex; align-items:center; justify-content:center; gap:6px;">
+            📲 Share Receipt
+          </button>
+        </div>
+        <button type="button" onclick="closeSendReceiptModal()" class="btn btn-ghost btn-sm" style="margin-top:4px;">Done / Close</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     /* ==========================================================================
        1. STRICT ZERO-FAKE-DATA STATE, GITHUB SYNC CREDENTIALS & PERSISTENCE ENGINE
@@ -1274,6 +1418,7 @@
         address: '',
         licenseNumber: '',
         taxRate: 0,
+        laborTaxable: true,
         // Hourly Labor Rate & Minimum Service Call Rules
         defaultHourlyRate: 0,
         overtimeHourlyRate: 0,
@@ -1402,7 +1547,7 @@
           clearTimeout(autoPushTimer);
           autoPushTimer = setTimeout(() => {
             pushDatabaseToGitHub(true);
-          }, 1200);
+          }, 350);
         }
       } catch (err) {
         notify('Storage full: Export JSON backup and clear old photos if needed.', 'error');
@@ -1918,6 +2063,7 @@
       if (entityType === 'job') openJobDetail(entityId);
       else if (entityType === 'estimate') openEstimateDetail(entityId);
       renderCurrentView();
+      triggerImmediateDatabaseSync(`Photo Removed from ${entityType === 'job' ? 'Work Order' : 'Estimate'}`);
     }
 
     /* ==========================================================================
@@ -2118,7 +2264,84 @@
       }
     }
 
-    async function pushDatabaseToGitHub(silent = false, initializeIfMissing = false) {
+    function mergeAppState(local, remote) {
+      if (!remote || typeof remote !== 'object') return local;
+
+      const mergeById = (localArr = [], remoteArr = []) => {
+        const map = new Map();
+        (remoteArr || []).forEach(item => {
+          if (item && item.id) map.set(item.id, { ...item });
+        });
+        (localArr || []).forEach(localItem => {
+          if (!localItem || !localItem.id) return;
+          const remoteItem = map.get(localItem.id);
+          if (!remoteItem) {
+            map.set(localItem.id, { ...localItem });
+          } else {
+            const merged = { ...remoteItem, ...localItem };
+            if (Array.isArray(localItem.photos) || Array.isArray(remoteItem.photos)) {
+              const photoMap = new Map();
+              (remoteItem.photos || []).forEach(p => photoMap.set(p.id || p.vaultPath || p.dataUrl, p));
+              (localItem.photos || []).forEach(p => photoMap.set(p.id || p.vaultPath || p.dataUrl, p));
+              merged.photos = Array.from(photoMap.values());
+            }
+            if (Array.isArray(localItem.laborEntries) || Array.isArray(remoteItem.laborEntries)) {
+              const labMap = new Map();
+              (remoteItem.laborEntries || []).forEach(l => labMap.set(l.id, l));
+              (localItem.laborEntries || []).forEach(l => labMap.set(l.id, l));
+              merged.laborEntries = Array.from(labMap.values());
+            }
+            if (Array.isArray(localItem.scrapLogs) || Array.isArray(remoteItem.scrapLogs)) {
+              const scrapMap = new Map();
+              (remoteItem.scrapLogs || []).forEach(s => scrapMap.set(s.id, s));
+              (localItem.scrapLogs || []).forEach(s => scrapMap.set(s.id, s));
+              merged.scrapLogs = Array.from(scrapMap.values());
+            }
+            if (Array.isArray(localItem.checklist) || Array.isArray(remoteItem.checklist)) {
+              const chkMap = new Map();
+              (remoteItem.checklist || []).forEach(c => chkMap.set(c.id, c));
+              (localItem.checklist || []).forEach(c => chkMap.set(c.id, c));
+              merged.checklist = Array.from(chkMap.values());
+            }
+            map.set(localItem.id, merged);
+          }
+        });
+        return Array.from(map.values());
+      };
+
+      return {
+        ...BLANK_STATE,
+        ...remote,
+        ...local,
+        settings: { ...BLANK_STATE.settings, ...(remote.settings || {}), ...(local.settings || {}) },
+        customers: mergeById(local.customers, remote.customers),
+        equipment: mergeById(local.equipment, remote.equipment),
+        pricebook: mergeById(local.pricebook, remote.pricebook),
+        estimates: mergeById(local.estimates, remote.estimates),
+        jobs: mergeById(local.jobs, remote.jobs),
+        invoices: mergeById(local.invoices, remote.invoices),
+        payments: mergeById(local.payments, remote.payments),
+        users: mergeById(local.users, remote.users)
+      };
+    }
+
+    async function triggerImmediateDatabaseSync(actionLabel = '') {
+      saveAppState(true);
+      if (isGhPushReady()) {
+        try {
+          updateSyncBadge('syncing', actionLabel ? `Syncing ${actionLabel}...` : 'Syncing...');
+          const commitMsg = actionLabel ? `${actionLabel} (${new Date().toISOString()})` : '';
+          const success = await pushDatabaseToGitHub(true, false, commitMsg);
+          if (success) {
+            console.log(`[FieldTitan Sync] Pushed immediate update to GitHub: ${actionLabel}`);
+          }
+        } catch (e) {
+          console.warn('[FieldTitan Sync] Immediate push deferred:', e);
+        }
+      }
+    }
+
+    async function pushDatabaseToGitHub(silent = false, initializeIfMissing = false, commitMessage = '') {
       if (!isGhPullReady()) {
         if (!silent) notify('Enter Encryption Passphrase in Settings first.', 'error');
         return false;
@@ -2148,6 +2371,22 @@
         if (headRes.ok) {
           const existingMeta = await headRes.json();
           currentSha = existingMeta.sha || '';
+
+          // 3-way conflict-free merge if remote changed since last pull
+          if (existingMeta.content && currentSha && currentSha !== ghConfig.lastSha) {
+            try {
+              const remoteText = base64ToUtf8(existingMeta.content || '').trim();
+              if (remoteText && remoteText !== '{}') {
+                const remoteDecrypted = await decryptDatabasePayload(remoteText, ghConfig.encryptionKey.trim());
+                if (remoteDecrypted && typeof remoteDecrypted === 'object' && Array.isArray(remoteDecrypted.customers)) {
+                  state = mergeAppState(state, remoteDecrypted);
+                  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+                }
+              }
+            } catch (mergeErr) {
+              console.warn('[FieldTitan Sync] Concurrent remote merge notice:', mergeErr);
+            }
+          }
         } else if (headRes.status === 404) {
           currentSha = ''; // File does not exist yet; PUT will create it
         } else {
@@ -2157,10 +2396,11 @@
 
         // Encrypt the entire state payload with AES-256-GCM before sending
         const encryptedPayload = await encryptDatabasePayload(state, ghConfig.encryptionKey.trim());
+        const commitMsg = commitMessage || (initializeIfMissing
+          ? `Initialize encrypted FieldTitan database (${new Date().toISOString()})`
+          : `Sync encrypted FieldTitan database (${new Date().toISOString()})`);
         const bodyObj = {
-          message: initializeIfMissing
-            ? `Initialize encrypted FieldTitan database (${new Date().toISOString()})`
-            : `Sync encrypted FieldTitan database (${new Date().toISOString()})`,
+          message: commitMsg,
           content: utf8ToBase64(encryptedPayload),
           branch: (ghConfig.branch || 'main').trim()
         };
@@ -3066,6 +3306,7 @@
         if (u) {
           u.dutyStatus = nextStatus;
           saveAppState(false);
+          triggerImmediateDatabaseSync(`Tech Duty Status: ${currentUser.name} (${nextStatus})`);
         }
       }
       updateUserSessionUI();
@@ -3603,6 +3844,7 @@
             openJobDetail(entityId);
             renderCurrentView();
             notify('Encrypted photo secured in repo vault!');
+            triggerImmediateDatabaseSync(`Attach Encrypted Photo to ${job.number}`);
           }
         } else if (entityType === 'estimate') {
           const est = state.estimates.find(e => e.id === entityId);
@@ -3614,6 +3856,7 @@
             openEstimateDetail(entityId);
             renderCurrentView();
             notify('Encrypted inspection photo secured in repo vault!');
+            triggerImmediateDatabaseSync(`Attach Encrypted Photo to ${est.number}`);
           }
         }
       } catch (err) {
@@ -4220,6 +4463,7 @@
       saveAppState();
       closeDrawer();
       renderCurrentView();
+      triggerImmediateDatabaseSync(existingId ? `Customer Updated: ${record.name}` : `Customer Registered: ${record.name}`);
     }
 
     function openCustomerDetail(customerId) {
@@ -4382,6 +4626,7 @@
       saveAppState();
       notify('Equipment added to customer asset registry');
       openCustomerDetail(customerId);
+      triggerImmediateDatabaseSync(`Equipment Added: ${fd.get('systemType').trim()} (${fd.get('brand').trim()})`);
     }
 
     function deleteEquipment(eqId, customerId) {
@@ -4390,6 +4635,7 @@
         saveAppState();
         notify('Equipment removed');
         openCustomerDetail(customerId);
+        triggerImmediateDatabaseSync('Equipment Removed from Registry');
       });
     }
 
@@ -4483,6 +4729,405 @@
       `;
     }
 
+    /* ==========================================================================
+       SCRAP SOLD & MATERIALS RECOVERY (WITH MANDATORY RECEIPT PHOTO)
+       ========================================================================== */
+    window._pendingScrapReceiptPhoto = null;
+
+    function openScrapLogModal(jobId) {
+      const job = state.jobs.find(j => j.id === jobId);
+      if (!job) return;
+      window._pendingScrapReceiptPhoto = null;
+      document.getElementById('scrap-log-job-id').value = jobId;
+      document.getElementById('scrap-log-amount').value = '';
+      document.getElementById('scrap-log-desc').value = '';
+      document.getElementById('scrap-log-yard').value = '';
+      document.getElementById('scrap-log-notes').value = '';
+      document.getElementById('scrap-log-date').value = todayISO();
+      document.getElementById('scrap-receipt-file-input').value = '';
+
+      const placeholder = document.getElementById('scrap-receipt-upload-placeholder');
+      const preview = document.getElementById('scrap-receipt-preview-container');
+      const img = document.getElementById('scrap-receipt-preview-img');
+      const badge = document.getElementById('scrap-receipt-status-badge');
+      const warning = document.getElementById('scrap-receipt-warning-text');
+      const progress = document.getElementById('scrap-log-progress');
+
+      if (placeholder) placeholder.style.display = 'block';
+      if (preview) preview.style.display = 'none';
+      if (img) img.src = '';
+      if (badge) {
+        badge.className = 'badge badge-warning';
+        badge.textContent = 'Required';
+      }
+      if (warning) warning.style.display = 'block';
+      if (progress) progress.style.display = 'none';
+
+      const modal = document.getElementById('scrap-log-modal');
+      if (modal) modal.classList.add('open');
+    }
+
+    function closeScrapLogModal() {
+      window._pendingScrapReceiptPhoto = null;
+      const modal = document.getElementById('scrap-log-modal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function onScrapReceiptFileSelected(input) {
+      const file = input.files?.[0];
+      if (!file) return;
+
+      compressImageFile(file, 1280, 0.75).then(dataUrl => {
+        window._pendingScrapReceiptPhoto = {
+          file: file,
+          dataUrl: dataUrl,
+          name: file.name
+        };
+
+        const placeholder = document.getElementById('scrap-receipt-upload-placeholder');
+        const preview = document.getElementById('scrap-receipt-preview-container');
+        const img = document.getElementById('scrap-receipt-preview-img');
+        const fname = document.getElementById('scrap-receipt-filename');
+        const badge = document.getElementById('scrap-receipt-status-badge');
+        const warning = document.getElementById('scrap-receipt-warning-text');
+
+        if (placeholder) placeholder.style.display = 'none';
+        if (preview) preview.style.display = 'block';
+        if (img) img.src = dataUrl;
+        if (fname) fname.textContent = file.name || 'scale_ticket.jpg';
+        if (badge) {
+          badge.className = 'badge badge-green';
+          badge.textContent = '✓ Ticket Attached';
+        }
+        if (warning) warning.style.display = 'none';
+      }).catch(err => {
+        notify('Failed to process scale ticket image: ' + err.message, 'error');
+      });
+    }
+
+    async function submitScrapLogForm(e) {
+      e.preventDefault();
+      const jobId = document.getElementById('scrap-log-job-id').value;
+      const job = state.jobs.find(j => j.id === jobId);
+      if (!job) {
+        notify('Job not found', 'error');
+        return;
+      }
+
+      // STRICT VALIDATION: Require scrap receipt photo!
+      if (!window._pendingScrapReceiptPhoto || !window._pendingScrapReceiptPhoto.dataUrl) {
+        notify('❌ Receipt photo is strictly required! Please take or upload a photo of the scrap yard ticket.', 'error');
+        const warning = document.getElementById('scrap-receipt-warning-text');
+        if (warning) {
+          warning.style.display = 'block';
+          warning.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        return;
+      }
+
+      const amount = parseFloat(document.getElementById('scrap-log-amount').value) || 0;
+      if (amount <= 0) {
+        notify('Please enter a valid payout amount received.', 'error');
+        return;
+      }
+
+      const desc = (document.getElementById('scrap-log-desc').value || '').trim();
+      if (!desc) {
+        notify('Please enter a material description.', 'error');
+        return;
+      }
+
+      const yard = (document.getElementById('scrap-log-yard').value || '').trim();
+      const date = document.getElementById('scrap-log-date').value || todayISO();
+      const notes = (document.getElementById('scrap-log-notes').value || '').trim();
+
+      const submitBtn = document.getElementById('scrap-log-submit-btn');
+      const progress = document.getElementById('scrap-log-progress');
+      if (submitBtn) submitBtn.disabled = true;
+      if (progress) progress.style.display = 'block';
+
+      try {
+        const photoObj = window._pendingScrapReceiptPhoto;
+        const photoId = 'ph_rcpt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+        let vaultPath = '';
+
+        if (ghConfig.encryptionKey && ghConfig.encryptionKey.trim() && photoObj.file) {
+          try {
+            const photoMeta = await uploadEncryptedPhotoToVault(
+              photoObj.file,
+              'job',
+              jobId,
+              'receipt',
+              `Scrap Receipt: ${money(amount)} - ${desc}`
+            );
+            if (photoMeta) {
+              vaultPath = photoMeta.vaultPath;
+              job.photos = job.photos || [];
+              job.photos.push(photoMeta);
+            }
+          } catch (encErr) {
+            console.warn('Scrap receipt vault upload warning:', encErr);
+          }
+        }
+
+        if (!vaultPath) {
+          job.photos = job.photos || [];
+          job.photos.push({
+            id: photoId,
+            category: 'receipt',
+            caption: `Scrap Receipt: ${money(amount)} - ${desc}`,
+            dataUrl: photoObj.dataUrl,
+            capturedAt: new Date().toISOString(),
+            uploadedBy: currentUser ? currentUser.name : 'Technician'
+          });
+        }
+
+        const scrapEntry = {
+          id: uid('scrap'),
+          amount,
+          description: desc,
+          yard,
+          date,
+          notes,
+          loggedBy: currentUser ? currentUser.name : 'Technician',
+          loggedAt: new Date().toISOString(),
+          photoId,
+          photoDataUrl: photoObj.dataUrl,
+          vaultPath
+        };
+
+        job.scrapLogs = job.scrapLogs || [];
+        job.scrapLogs.push(scrapEntry);
+
+        closeScrapLogModal();
+        notify(`✅ Logged ${money(amount)} scrap payout with verified receipt!`);
+        openJobDetail(jobId);
+        renderCurrentView();
+
+        // Immediate sync to GitHub database with clear commit label
+        await triggerImmediateDatabaseSync(`Log Scrap Sold (+${money(amount)} on ${job.number})`);
+      } catch (err) {
+        notify('Failed to save scrap log: ' + err.message, 'error');
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+        if (progress) progress.style.display = 'none';
+      }
+    }
+
+    function deleteScrapLog(jobId, scrapId) {
+      if (!confirmAction('Delete this scrap payout log entry?')) return;
+      const job = state.jobs.find(j => j.id === jobId);
+      if (job && job.scrapLogs) {
+        job.scrapLogs = job.scrapLogs.filter(s => s.id !== scrapId);
+        notify('Scrap log removed');
+        openJobDetail(jobId);
+        renderCurrentView();
+        triggerImmediateDatabaseSync(`Delete Scrap Log on ${job.number}`);
+      }
+    }
+
+    function openScrapReceiptLightbox(jobId, scrapId) {
+      const job = state.jobs.find(j => j.id === jobId);
+      const scrap = (job?.scrapLogs || []).find(s => s.id === scrapId);
+      if (!scrap) return;
+      const photo = {
+        id: scrap.photoId || scrap.id,
+        category: 'receipt',
+        caption: `Scrap Payout: ${money(scrap.amount)} (${scrap.description})${scrap.yard ? ' • ' + scrap.yard : ''}`,
+        dataUrl: scrap.photoDataUrl,
+        vaultPath: scrap.vaultPath,
+        uploadedBy: scrap.loggedBy,
+        capturedAt: scrap.loggedAt || scrap.date
+      };
+      openPhotoLightbox(photo, 'job', jobId);
+    }
+
+    /* ==========================================================================
+       SEND PDF RECEIPT & INVOICE MULTI-CHANNEL DISPATCH
+       ========================================================================== */
+    function openSendReceiptModal(type, id) {
+      const isInv = type === 'invoice';
+      const doc = isInv ? state.invoices.find(i => i.id === id) : state.estimates.find(e => e.id === id);
+      if (!doc) return;
+
+      const cust = getCustomer(doc.customerId);
+      const fin = calcFinancials(doc.items, doc.taxRate, doc.discount);
+      const paid = isInv ? getInvoicePaidAmount(doc.id) : 0;
+      const balance = isInv ? Math.max(0, fin.total - paid) : fin.total;
+
+      document.getElementById('send-receipt-doc-type').value = type;
+      document.getElementById('send-receipt-doc-id').value = id;
+      document.getElementById('send-receipt-title').innerHTML = `<span>🧾</span> Send ${isInv ? 'Receipt & Invoice' : 'Estimate'} ${esc(doc.number)}`;
+      document.getElementById('send-receipt-email').value = cust?.email || '';
+      document.getElementById('send-receipt-phone').value = cust?.phone || '';
+
+      const summary = document.getElementById('send-receipt-summary-card');
+      if (summary) {
+        summary.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+            <div>
+              <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Recipient</div>
+              <div style="font-weight:800; font-size:1rem;">${esc(cust ? cust.name : 'Unknown Customer')}</div>
+              ${cust?.serviceAddress ? `<div style="font-size:0.78rem; color:var(--text-muted);">${esc(cust.serviceAddress)}</div>` : ''}
+            </div>
+            <div style="text-align:right;">
+              <span class="badge ${balance > 0.009 ? 'badge-amber' : 'badge-green'}">${isInv ? (balance > 0.009 ? 'Balance Due' : 'Paid in Full') : 'Estimate'}</span>
+              <div style="font-size:1.15rem; font-weight:900; margin-top:2px;">${money(balance > 0.009 ? balance : fin.total)}</div>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr ${isInv ? '1fr' : ''}; gap:6px; font-size:0.78rem; border-top:1px solid var(--border-subtle); padding-top:6px; margin-top:6px;">
+            <div><span style="color:var(--text-muted);">Total:</span> <strong>${money(fin.total)}</strong></div>
+            ${isInv ? `<div><span style="color:var(--text-muted);">Paid:</span> <strong style="color:var(--success);">${money(paid)}</strong></div>` : ''}
+            <div><span style="color:var(--text-muted);">Due:</span> <strong>${money(balance)}</strong></div>
+          </div>
+        `;
+      }
+
+      const modal = document.getElementById('send-receipt-modal');
+      if (modal) modal.classList.add('open');
+    }
+
+    function closeSendReceiptModal() {
+      const modal = document.getElementById('send-receipt-modal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function executeSendEmailReceipt() {
+      const type = document.getElementById('send-receipt-doc-type').value;
+      const id = document.getElementById('send-receipt-doc-id').value;
+      const targetEmail = (document.getElementById('send-receipt-email').value || '').trim();
+
+      const isInv = type === 'invoice';
+      const doc = isInv ? state.invoices.find(i => i.id === id) : state.estimates.find(e => e.id === id);
+      if (!doc) return;
+
+      const cust = getCustomer(doc.customerId);
+      const fin = calcFinancials(doc.items, doc.taxRate, doc.discount);
+      const s = state.settings;
+      const paid = isInv ? getInvoicePaidAmount(doc.id) : 0;
+      const balance = isInv ? Math.max(0, fin.total - paid) : fin.total;
+
+      const compName = s.companyName || 'FieldTitan Service';
+      const subject = `${compName} - ${isInv ? 'Receipt & Invoice' : 'Service Estimate'} #${doc.number}`;
+
+      let itemsList = (doc.items || []).map(it => {
+        const isHr = it.billingType === 'hourly';
+        return `• ${it.name} ${isHr ? `(${it.qty} hrs @ ${money(it.price)}/hr)` : `(Qty: ${it.qty})`} - ${money(it.qty * it.price)}`;
+      }).join('\n');
+
+      const body = `Hi ${cust ? cust.name : 'Valued Customer'},
+
+Thank you for your business with ${compName}! Here is your receipt and details for ${isInv ? 'Invoice' : 'Estimate'} #${doc.number}.
+
+---------------------------------------
+${isInv ? 'RECEIPT & INVOICE DETAILS' : 'ESTIMATE DETAILS'}
+---------------------------------------
+Date: ${fmtDate(doc.date)}
+Customer: ${cust ? cust.name : ''}
+${cust?.serviceAddress ? 'Address: ' + cust.serviceAddress : ''}
+
+SERVICES / ITEMS:
+${itemsList}
+
+---------------------------------------
+Subtotal: ${money(fin.subtotal)}
+${fin.discount > 0 ? `Discount: -${money(fin.discount)}\n` : ''}Tax (${doc.taxRate}%): ${money(fin.tax)}
+TOTAL: ${money(fin.total)}
+${isInv ? `Amount Paid: ${money(paid)}\nBALANCE DUE: ${money(balance)}\n` : ''}
+${doc.notes ? '\nNotes: ' + doc.notes + '\n' : ''}
+${s.invoiceTerms ? '\nTerms: ' + s.invoiceTerms + '\n' : ''}
+---------------------------------------
+${compName}
+Phone: ${s.phone || ''}
+${s.email ? 'Email: ' + s.email : ''}
+`;
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(body).catch(() => {});
+      }
+
+      const mailtoUrl = `mailto:${encodeURIComponent(targetEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      window.open(mailtoUrl, '_blank');
+      notify(`Prepared receipt email for ${targetEmail || (cust?.email || 'customer')}!`);
+    }
+
+    function executeSendSmsReceipt() {
+      const type = document.getElementById('send-receipt-doc-type').value;
+      const id = document.getElementById('send-receipt-doc-id').value;
+      const targetPhone = (document.getElementById('send-receipt-phone').value || '').trim();
+
+      const isInv = type === 'invoice';
+      const doc = isInv ? state.invoices.find(i => i.id === id) : state.estimates.find(e => e.id === id);
+      if (!doc) return;
+
+      const cust = getCustomer(doc.customerId);
+      const fin = calcFinancials(doc.items, doc.taxRate, doc.discount);
+      const s = state.settings;
+      const paid = isInv ? getInvoicePaidAmount(doc.id) : 0;
+      const balance = isInv ? Math.max(0, fin.total - paid) : fin.total;
+
+      const compName = s.companyName || 'FieldTitan';
+      let smsText = '';
+
+      if (isInv) {
+        if (balance <= 0.009) {
+          smsText = `Hi ${cust ? cust.name : ''}! This is ${compName}. Receipt for Invoice #${doc.number}: Paid in full (${money(fin.total)}). Thank you for your business! ${s.phone ? 'Phone: ' + s.phone : ''}`;
+        } else {
+          smsText = `Hi ${cust ? cust.name : ''}! This is ${compName}. Invoice #${doc.number}: Total ${money(fin.total)}, Paid ${money(paid)}, Balance Due: ${money(balance)}. Thank you! ${s.phone ? 'Questions: ' + s.phone : ''}`;
+        }
+      } else {
+        smsText = `Hi ${cust ? cust.name : ''}! This is ${compName}. Here is your Estimate #${doc.number} for ${money(fin.total)}. Thank you!`;
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(smsText).catch(() => {});
+      }
+
+      const cleanPhone = targetPhone.replace(/[^0-9+]/g, '');
+      const smsUrl = `sms:${encodeURIComponent(cleanPhone)}?body=${encodeURIComponent(smsText)}`;
+      window.location.href = smsUrl;
+      notify(`SMS receipt generated for ${targetPhone || 'customer'}!`);
+    }
+
+    function executePrintPdfReceipt() {
+      const type = document.getElementById('send-receipt-doc-type').value;
+      const id = document.getElementById('send-receipt-doc-id').value;
+      closeSendReceiptModal();
+      printRecord(type, id);
+    }
+
+    function executeNativeShareReceipt() {
+      const type = document.getElementById('send-receipt-doc-type').value;
+      const id = document.getElementById('send-receipt-doc-id').value;
+      const isInv = type === 'invoice';
+      const doc = isInv ? state.invoices.find(i => i.id === id) : state.estimates.find(e => e.id === id);
+      if (!doc) return;
+
+      const cust = getCustomer(doc.customerId);
+      const fin = calcFinancials(doc.items, doc.taxRate, doc.discount);
+      const s = state.settings;
+      const paid = isInv ? getInvoicePaidAmount(doc.id) : 0;
+      const balance = isInv ? Math.max(0, fin.total - paid) : fin.total;
+
+      const compName = s.companyName || 'FieldTitan';
+      const title = `${compName} - ${isInv ? 'Invoice' : 'Estimate'} #${doc.number}`;
+      const text = `${compName} Receipt for ${isInv ? 'Invoice' : 'Estimate'} #${doc.number}\nCustomer: ${cust ? cust.name : ''}\nTotal: ${money(fin.total)}${isInv ? `\nPaid: ${money(paid)}\nBalance: ${money(balance)}` : ''}\nThank you for your business!`;
+
+      if (navigator.share) {
+        navigator.share({ title, text }).catch(err => {
+          console.log('Share dismissed or cancelled:', err);
+        });
+      } else {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => {
+            notify('Receipt details copied to clipboard!');
+          });
+        } else {
+          notify('Sharing not supported on this browser');
+        }
+      }
+    }
+
     function renderJobCardHTML(job) {
       const cust = getCustomer(job.customerId);
       const doneChk = (job.checklist || []).filter(c => c.done).length;
@@ -4509,6 +5154,7 @@
             </div>
 
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              ${cust?.phone ? `<a href="sms:${esc(cust.phone)}?body=${encodeURIComponent(`Hi ${cust.name || ''}, this is ${state.settings.companyName || 'FieldTitan'}. Just reminding you of your service appointment for ${job.title} on ${fmtDate(job.date)} (${job.timeWindow || 'scheduled window'}). Reply to confirm!`)}" class="btn btn-secondary btn-sm" title="Send SMS appointment reminder">📱 SMS Reminder</a>` : ''}
               ${cust?.serviceAddress ? `<a href="${getDirectionsUrl(cust.serviceAddress)}" target="_blank" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:4px;">🧭 Navigate</a>` : ''}
               <button onclick="openJobDetail('${job.id}')" class="btn btn-primary btn-sm">Open Work Order</button>
               <button onclick="convertJobToInvoice('${job.id}')" class="btn btn-success btn-sm">Invoice</button>
@@ -4521,6 +5167,7 @@
             <span>Timer: <strong>${formatDuration(job.loggedSeconds || 0)}</strong></span>
             <span>Labor Logs: <strong>${loggedHrs.toFixed(2)} hrs</strong></span>
             <span>Scope Total: <strong>${money(tot)}</strong></span>
+            ${(job.scrapLogs || []).length > 0 ? `<span style="color:#10b981; font-weight:800;">♻️ Scrap: <strong>+${money((job.scrapLogs || []).reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0))}</strong></span>` : ''}
           </div>
         </div>
       `;
@@ -4691,6 +5338,7 @@
       saveAppState();
       closeDrawer();
       renderCurrentView();
+      triggerImmediateDatabaseSync(existingId ? `Work Order Updated: ${payload.number}` : `Job Scheduled: ${payload.number}`);
     }
 
     function openJobDetail(jobId) {
@@ -4700,6 +5348,11 @@
       const eq = state.equipment.find(e => e.id === job.equipmentId);
       const totals = calcFinancials(job.items, state.settings.taxRate, 0);
       const smsMsg = encodeURIComponent(`Hi ${cust ? cust.name : ''}, this is ${state.settings.companyName || 'your service tech'}. I am on my way for your ${job.title} appointment!`);
+      const reminderDateStr = job.date ? fmtDate(job.date) : 'upcoming';
+      const reminderTimeStr = job.timeWindow ? ` (${job.timeWindow})` : '';
+      const reminderMsg = encodeURIComponent(`Hi ${cust ? cust.name : 'there'}, this is ${state.settings.companyName || 'FieldTitan'}. Just a friendly reminder of your service appointment for ${job.title} scheduled for ${reminderDateStr}${reminderTimeStr}. Please reply to confirm or let us know if you need to reschedule!`);
+      const scrapLogs = job.scrapLogs || [];
+      const totalScrap = scrapLogs.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
       const s = state.settings;
       const defaultRate = parseFloat(s.defaultHourlyRate) || 0;
       const otRate = parseFloat(s.overtimeHourlyRate) || defaultRate;
@@ -4726,8 +5379,9 @@
             ${eq ? `<div style="font-size:0.8rem; color:var(--brand-primary); font-weight:700; margin-top:2px;">Unit: ${esc(eq.systemType)} — ${esc(eq.brand)} (${esc(eq.modelNumber)})</div>` : ''}
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
               ${cust?.phone ? `<a href="tel:${esc(cust.phone)}" class="btn btn-success btn-sm">Call</a>` : ''}
+              ${cust?.phone ? `<a href="sms:${esc(cust.phone)}?body=${reminderMsg}" class="btn btn-secondary btn-sm" title="Send SMS appointment reminder">📱 SMS Reminder</a>` : ''}
               ${cust?.phone ? `<a href="sms:${esc(cust.phone)}?body=${smsMsg}" class="btn btn-secondary btn-sm">SMS "On My Way"</a>` : ''}
-              ${cust?.serviceAddress ? `<a href="${getDirectionsUrl(cust.serviceAddress)}" target="_blank" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:4px;">🧭 Navigate (Turn-by-Turn)</a>` : ''}
+              ${cust?.serviceAddress ? `<a href="${getDirectionsUrl(cust.serviceAddress)}" target="_blank" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:4px;">🧭 Navigate</a>` : ''}
             </div>
             ${cust?.gateCode ? `<div style="margin-top:8px; font-size:0.8rem; color:var(--warning); font-weight:700;">Access Code: ${esc(cust.gateCode)}</div>` : ''}
           </div>
@@ -4770,10 +5424,14 @@
                   <input type="number" step="0.01" min="0" id="labor-log-rate" value="${defaultRate}" class="form-control" style="min-height:40px;" />
                 </div>
               </div>
-              <div style="display:flex; gap:8px;">
+              <div style="display:flex; gap:8px; margin-bottom:6px;">
                 <input id="labor-log-desc" class="form-control" style="min-height:40px;" placeholder="Labor task description (e.g., Diagnostic & Repair Labor)" />
                 <button type="button" onclick="addManualLaborLog('${job.id}')" class="btn btn-secondary btn-sm">Add Labor</button>
               </div>
+              <label style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-muted); cursor:pointer;">
+                <input type="checkbox" id="labor-log-taxable" ${state.settings.laborTaxable !== false ? 'checked' : ''} style="accent-color:var(--brand-primary);" />
+                Taxable Labor (${parseFloat(state.settings.taxRate) || 0}% sales/service tax applies)
+              </label>
             </div>
 
             <!-- Logged Labor Entries List -->
@@ -4886,7 +5544,7 @@
         description: `On-Site Labor (${formatDuration(totalSec)} tracked)`,
         hours: billableHours,
         rate,
-        taxable: false
+        taxable: state.settings.laborTaxable !== false
       });
 
       // Reset timer after logging
@@ -4896,6 +5554,7 @@
       notify(`Logged ${billableHours} billable hrs @ ${money(rate)}/hr`);
       openJobDetail(jobId);
       renderCurrentView();
+      triggerImmediateDatabaseSync(`Tracked Labor Logged (${billableHours}h on ${job.number})`);
     }
 
     function addManualLaborLog(jobId) {
@@ -4911,19 +5570,21 @@
       }
 
       const billableHours = applyLaborRounding(rawHrs);
+      const isTaxable = document.getElementById('labor-log-taxable') ? document.getElementById('labor-log-taxable').checked : (state.settings.laborTaxable !== false);
       job.laborEntries = job.laborEntries || [];
       job.laborEntries.push({
         id: uid('lab'),
         description: desc,
         hours: billableHours,
         rate,
-        taxable: false
+        taxable: isTaxable
       });
 
       saveAppState();
       notify(`Added ${billableHours} hrs @ ${money(rate)}/hr`);
       openJobDetail(jobId);
       renderCurrentView();
+      triggerImmediateDatabaseSync(`Manual Labor Logged (${billableHours}h on ${job.number})`);
     }
 
     function removeLaborLog(jobId, idx) {
@@ -4933,6 +5594,7 @@
         saveAppState();
         openJobDetail(jobId);
         renderCurrentView();
+        triggerImmediateDatabaseSync(`Removed Labor Log on ${job.number}`);
       }
     }
 
@@ -4943,7 +5605,7 @@
         name: le.description || 'Field Service Labor',
         qty: parseFloat(le.hours) || 0,
         price: parseFloat(le.rate) || 0,
-        taxable: Boolean(le.taxable)
+        taxable: le.taxable !== undefined ? Boolean(le.taxable) : (state.settings.laborTaxable !== false)
       }));
     }
 
@@ -5047,6 +5709,7 @@
       notify(`Job marked ${status}`);
       openJobDetail(jobId);
       renderCurrentView();
+      triggerImmediateDatabaseSync(`Job ${job.number} Status: ${status}`);
     }
 
     function updateJobField(jobId, field, value) {
@@ -5080,6 +5743,7 @@
         saveAppState();
         openJobDetail(jobId);
         renderCurrentView();
+        triggerImmediateDatabaseSync(`Checklist ${item.done ? 'Done' : 'Undone'} on ${job.number}`);
       }
     }
 
@@ -5090,6 +5754,7 @@
         saveAppState();
         openJobDetail(jobId);
         renderCurrentView();
+        triggerImmediateDatabaseSync(`Checklist Item Deleted on ${job.number}`);
       }
     }
 
@@ -5167,6 +5832,7 @@
       notify(`Created Invoice ${inv.number}`);
       switchTab('invoices');
       openInvoiceDetail(inv.id);
+      triggerImmediateDatabaseSync(`Created Invoice ${inv.number} from Job ${job.number}`);
     }
 
     /* ==========================================================================
@@ -5363,6 +6029,7 @@
       saveAppState();
       closeDrawer();
       renderCurrentView();
+      triggerImmediateDatabaseSync(existingId ? `Estimate Updated: ${payload.number}` : `Estimate Created: ${payload.number}`);
     }
 
     function openEstimateDetail(estId) {
@@ -5677,8 +6344,9 @@
 
       const footer = `
         <button onclick="deleteEntity('invoices', '${inv.id}')" class="btn btn-ghost" style="color:var(--danger); margin-right:auto;">Delete</button>
-        <button onclick="printRecord('invoice', '${inv.id}')" class="btn btn-secondary">Print / PDF Receipt</button>
-        <button onclick="openInvoiceForm('${inv.id}')" class="btn btn-primary">Edit Invoice</button>
+        <button onclick="openSendReceiptModal('invoice', '${inv.id}')" class="btn btn-primary">🧾 Send PDF Receipt</button>
+        <button onclick="printRecord('invoice', '${inv.id}')" class="btn btn-secondary">🖨️ Print</button>
+        <button onclick="openInvoiceForm('${inv.id}')" class="btn btn-secondary">Edit</button>
       `;
 
       openDrawer(`Invoice ${inv.number}`, body, footer);
@@ -5909,6 +6577,7 @@
       notify(`Payment of ${money(amt)} recorded!`);
       openInvoiceDetail(inv.id);
       renderCurrentView();
+      triggerImmediateDatabaseSync(`Payment Recorded (+${money(amt)} on ${inv.number})`);
     }
 
     function openInvoiceForm(invId = null, prefillCustomerId = '') {
@@ -6024,6 +6693,7 @@
       saveAppState();
       closeDrawer();
       renderCurrentView();
+      triggerImmediateDatabaseSync(existingId ? `Invoice Updated: ${payload.number}` : `Invoice Created: ${payload.number}`);
     }
 
     /* ==========================================================================
@@ -6163,6 +6833,7 @@
       saveAppState();
       closeDrawer();
       renderCurrentView();
+      triggerImmediateDatabaseSync(existingId ? `Pricebook Item Updated: ${payload.name}` : `Pricebook Item Added: ${payload.name}`);
     }
 
     function renderLineItemEditorShell() {
@@ -6262,7 +6933,7 @@
         name: isHourly ? 'Field Service Labor' : '',
         qty: 1,
         price: isHourly ? (parseFloat(state.settings.defaultHourlyRate) || 0) : 0,
-        taxable: !isHourly
+        taxable: isHourly ? (state.settings.laborTaxable !== false) : true
       });
       renderDraftLineItems();
     }
@@ -6275,7 +6946,7 @@
         name: 'Minimum Service Call / Diagnostic Fee',
         qty: 1,
         price: fee,
-        taxable: false
+        taxable: (state.settings.laborTaxable !== false)
       });
       renderDraftLineItems();
     }
@@ -6634,11 +7305,23 @@
               </div>
             </div>
 
-            <div class="grid-4">
-              <div class="form-group">
-                <label class="form-label">Tax Rate (%)</label>
-                <input type="number" step="0.01" min="0" name="taxRate" value="${s.taxRate}" class="form-control" />
+            <!-- Tax Rate & Labor Taxability -->
+            <div class="grid-2" style="background:var(--bg-subtle); padding:12px; border-radius:8px; border:1px solid var(--border-color); margin-bottom:12px;">
+              <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label"><strong>Sales & Service Tax Rate (%)</strong></label>
+                <input type="number" step="0.01" min="0" name="taxRate" value="${s.taxRate}" class="form-control" placeholder="e.g. 11.45" />
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Applies to materials, parts, and billable labor services.</div>
               </div>
+              <div class="form-group" style="margin-bottom:0; display:flex; flex-direction:column; justify-content:center;">
+                <label class="form-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:700;">
+                  <input type="checkbox" name="laborTaxable" ${s.laborTaxable !== false ? 'checked' : ''} style="width:18px; height:18px; accent-color:var(--brand-primary);" />
+                  Tax Labor & Service Hours (Legally Taxable)
+                </label>
+                <div style="font-size:0.75rem; color:var(--text-muted);">When enabled, all hourly labor, service charges, and timer logs are marked taxable by default.</div>
+              </div>
+            </div>
+
+            <div class="grid-3">
               <div class="form-group">
                 <label class="form-label">Job Prefix</label>
                 <input name="jobPrefix" value="${esc(s.jobPrefix)}" class="form-control" />
@@ -6921,6 +7604,7 @@
       closeTeamMemberModal();
       notify(`Team member ${name} saved! Silent cloud credentials provisioned.`);
       renderCurrentView();
+      triggerImmediateDatabaseSync(`Team Member Provisioned: ${name} (${role})`);
     }
 
     function toggleUserStatus(userId) {
@@ -6930,6 +7614,7 @@
       saveAppState();
       notify(`User ${u.name} is now ${u.status === 'disabled' ? 'Disabled' : 'Active'}.`);
       renderCurrentView();
+      triggerImmediateDatabaseSync(`User Account Status: ${u.name} (${u.status})`);
     }
 
     function deleteTeamUser(userId) {
@@ -6941,6 +7626,7 @@
           saveAppState();
           notify('Team member removed.');
           renderCurrentView();
+          triggerImmediateDatabaseSync('Team Member Removed');
         }
       );
     }
@@ -6989,6 +7675,7 @@
         minServiceCallFee: parseFloat(fd.get('minServiceCallFee')) || 0,
         laborRounding: fd.get('laborRounding') || 'exact',
         taxRate: parseFloat(fd.get('taxRate')) || 0,
+        laborTaxable: fd.get('laborTaxable') === 'on',
         jobPrefix: fd.get('jobPrefix').trim() || 'JOB-',
         estimatePrefix: fd.get('estimatePrefix').trim() || 'EST-',
         invoicePrefix: fd.get('invoicePrefix').trim() || 'INV-',
@@ -7003,6 +7690,7 @@
       saveAppState();
       notify('Company profile, labor rates & payment settings saved!');
       updateNavStates();
+      triggerImmediateDatabaseSync('Settings & Labor Rates Updated');
     }
 
     function downloadJsonBackup() {
@@ -7132,6 +7820,7 @@
         closeDrawer();
         notify('Deleted');
         renderCurrentView();
+        triggerImmediateDatabaseSync(`Deleted ${collection.slice(0, -1)} Record`);
       });
     }
 
