@@ -2292,7 +2292,7 @@
           });
           if (res.ok) {
             const fileObj = await res.json();
-            rawJson = base64ToUtf8(fileObj.content || '');
+            rawJson = await fetchGitHubFileText(fileObj, ghConfig.token);
           }
         }
 
@@ -2540,6 +2540,62 @@
       return `https://api.github.com/repos/${owner}/${repo}/contents/${cleanPath}${withRef ? `?ref=${branch}&_t=${Date.now()}` : ''}`;
     }
 
+    async function fetchGitHubFileText(fileObj, token = '') {
+      if (!fileObj || typeof fileObj !== 'object') return '';
+
+      // 1. If base64 content is provided directly (files <= 1MB)
+      if (fileObj.content && fileObj.encoding === 'base64') {
+        const decoded = base64ToUtf8(fileObj.content).trim();
+        if (decoded) return decoded;
+      }
+
+      const owner = encodeURIComponent((ghConfig.owner || '').trim());
+      const repo = encodeURIComponent((ghConfig.repo || '').trim());
+      const sha = fileObj.sha || '';
+
+      // 2. Fetch via Git Blobs API (supports up to 100 MB, authenticated or public)
+      if (sha && owner && repo) {
+        try {
+          const blobHeaders = {
+            'Accept': 'application/vnd.github.raw+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+          };
+          if (token && token.trim()) {
+            blobHeaders['Authorization'] = `Bearer ${token.trim()}`;
+          }
+          const blobUrl = `https://api.github.com/repos/${owner}/${repo}/git/blobs/${sha}`;
+          const blobRes = await fetch(blobUrl, { cache: 'no-store', headers: blobHeaders });
+          if (blobRes.ok) {
+            const blobText = (await blobRes.text()).trim();
+            if (blobText) return blobText;
+          }
+        } catch (blobErr) {
+          console.warn('[FieldTitan Sync] Git Blobs API fetch failed, trying download_url:', blobErr);
+        }
+      }
+
+      // 3. Fetch via download_url / raw.githubusercontent.com fallback
+      const branch = encodeURIComponent((ghConfig.branch || 'main').trim());
+      const cleanPath = (ghConfig.path || 'DATA.json').trim().replace(/^\/+/, '');
+      const dlUrl = fileObj.download_url || (owner && repo
+        ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${cleanPath}`
+        : '');
+
+      if (dlUrl) {
+        try {
+          const dlRes = await fetch(dlUrl + (dlUrl.includes('?') ? '&' : '?') + `_t=${Date.now()}`, { cache: 'no-store' });
+          if (dlRes.ok) {
+            const dlText = (await dlRes.text()).trim();
+            if (dlText) return dlText;
+          }
+        } catch (dlErr) {
+          console.warn('[FieldTitan Sync] download_url fetch error:', dlErr);
+        }
+      }
+
+      return '';
+    }
+
     async function pullDatabaseFromGitHub(silent = false, isInternalMerge = false) {
       if (!isGhPullReady()) {
         if (!silent) {
@@ -2618,7 +2674,7 @@
         }
 
         const fileObj = await res.json();
-        const decodedText = base64ToUtf8(fileObj.content || '').trim();
+        const decodedText = await fetchGitHubFileText(fileObj, ghConfig.token);
 
         if (!decodedText || decodedText === '{}') {
           ghConfig.lastSha = fileObj.sha || '';
@@ -2830,9 +2886,9 @@
           currentSha = existingMeta.sha || '';
 
           // 3-way conflict-free merge if remote changed since last pull
-          if (existingMeta.content && currentSha && currentSha !== ghConfig.lastSha) {
+          if (currentSha && currentSha !== ghConfig.lastSha) {
             try {
-              const remoteText = base64ToUtf8(existingMeta.content || '').trim();
+              const remoteText = await fetchGitHubFileText(existingMeta, ghConfig.token);
               if (remoteText && remoteText !== '{}') {
                 const remoteDecrypted = await decryptDatabasePayload(remoteText, ghConfig.encryptionKey.trim());
                 if (remoteDecrypted && typeof remoteDecrypted === 'object' && Array.isArray(remoteDecrypted.customers)) {
@@ -3022,11 +3078,8 @@
             return;
           }
 
-          const decodedText = base64ToUtf8(fileObj.content || '').trim();
+          const decodedText = await fetchGitHubFileText(fileObj, ghConfig.token);
           if (!decodedText || decodedText === '{}') {
-            ghConfig.lastSha = remoteSha;
-            ghSyncState.lastSha = remoteSha;
-            saveGhConfig();
             isCheckingRemote = false;
             return;
           }
@@ -5305,7 +5358,12 @@
 
     function getAllScrapSales() {
       state.scrapSales = Array.isArray(state.scrapSales) ? state.scrapSales : [];
-      const list = [...state.scrapSales];
+      const jobMap = new Map((state.jobs || []).map(j => [j.id, j.number]));
+      const list = state.scrapSales.map(s => ({
+        ...s,
+        jobNumber: s.jobNumber || (s.jobId ? jobMap.get(s.jobId) : '')
+      }));
+
       // Gather any existing job-level scrap logs without duplicates
       (state.jobs || []).forEach(j => {
         (j.scrapLogs || []).forEach(sl => {
@@ -5518,6 +5576,7 @@
       try {
         let photoId = existing?.photoId || ('ph_rcpt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6));
         let vaultPath = existing?.vaultPath || '';
+        let thumbnail = existing?.thumbnail || '';
         let photoDataUrl = (photoObj && photoObj.dataUrl) ? photoObj.dataUrl : (existing?.photoDataUrl || '');
 
         if (photoObj && photoObj.file && isGhPushReady()) {
@@ -5532,6 +5591,7 @@
             if (photoMeta) {
               vaultPath = photoMeta.vaultPath;
               photoId = photoMeta.id;
+              if (photoMeta.thumbnail) thumbnail = photoMeta.thumbnail;
             }
           } catch (encErr) {
             console.warn('Scrap receipt vault upload warning:', encErr);
@@ -5548,7 +5608,8 @@
           existing.notes = notes;
           existing.jobId = selectedJobId;
           if (vaultPath) existing.vaultPath = vaultPath;
-          if (photoDataUrl) existing.photoDataUrl = photoDataUrl;
+          if (thumbnail) existing.thumbnail = thumbnail;
+          if (photoDataUrl) existing.photoDataUrl = vaultPath ? '' : photoDataUrl;
           existing.updatedAt = new Date().toISOString();
           existing.updatedBy = currentUser ? currentUser.name : 'Admin';
 
@@ -5581,8 +5642,10 @@
             loggedBy: currentUser ? currentUser.name : 'Technician',
             loggedByRole: currentUser ? currentUser.role : 'tech',
             loggedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
             photoId,
-            photoDataUrl,
+            thumbnail,
+            photoDataUrl: vaultPath ? '' : photoDataUrl,
             vaultPath
           };
 
@@ -5646,6 +5709,7 @@
         id: scrap.photoId || scrap.id,
         category: 'receipt',
         caption: `Scrap Payout: ${money(scrap.amount)} (${scrap.description || 'Metal Scrap'})${scrap.yard ? ' • ' + scrap.yard : ''}`,
+        thumbnail: scrap.thumbnail || '',
         dataUrl: scrap.photoDataUrl || scrap.dataUrl,
         vaultPath: scrap.vaultPath,
         uploadedBy: scrap.loggedBy,
@@ -5658,6 +5722,7 @@
       renderScrapHistoryModalContent();
       const modal = document.getElementById('scrap-history-modal');
       if (modal) modal.classList.add('open');
+      setTimeout(loadAllPendingVaultPhotos, 50);
     }
 
     function closeScrapHistoryModal() {
@@ -5716,17 +5781,19 @@
           </div>
         `}
       `;
+      setTimeout(loadAllPendingVaultPhotos, 50);
     }
 
     function renderScrapSaleRowHTML(s, isAdmin) {
-      const hasPhoto = !!(s.photoDataUrl || s.vaultPath);
+      const hasPhoto = !!(s.thumbnail || s.photoDataUrl || s.vaultPath);
+      const imgSrc = s.thumbnail || s.photoDataUrl || '';
       return `
         <div class="card" style="padding:12px; margin:0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-left:4px solid var(--warning);">
           <div style="display:flex; align-items:center; gap:12px;">
             <!-- Receipt Photo Thumbnail -->
             <div onclick="openScrapReceiptLightbox('${s.jobId || ''}', '${s.id}')" style="width:52px; height:52px; border-radius:6px; overflow:hidden; border:1px solid var(--border-color); background:var(--bg-subtle); cursor:pointer; position:relative; flex-shrink:0;" title="Click to view full receipt photo">
               ${hasPhoto ? `
-                <img src="${s.photoDataUrl || ''}" data-vault-path="${s.vaultPath || ''}" alt="Receipt" style="width:100%; height:100%; object-fit:cover;" onerror="handleVaultPhotoError(this, '${s.id}', 'job', '', 'receipt')" />
+                <img ${imgSrc ? `src="${imgSrc}"` : ''} data-vault-path="${s.vaultPath || ''}" data-photo-id="${s.id}" data-category="receipt" alt="Receipt" style="width:100%; height:100%; object-fit:cover;" onerror="handleVaultPhotoError(this, '${s.id}', 'job', '', 'receipt')" />
                 <span style="position:absolute; bottom:2px; right:2px; background:rgba(0,0,0,0.65); color:#fff; font-size:0.55rem; padding:1px 3px; border-radius:3px; font-weight:800;">🔍</span>
               ` : `
                 <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:1.2rem;">🧾</div>
@@ -9869,7 +9936,7 @@ ${s.email ? 'Email: ' + s.email : ''}
 
       // Register PWA Service Worker for Offline-First Capability & Home Screen Install
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js?v=15').catch((err) => {
+        navigator.serviceWorker.register('./sw.js?v=16').catch((err) => {
           console.warn('Service worker registration error:', err);
         });
       }
