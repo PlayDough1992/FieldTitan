@@ -234,6 +234,43 @@
       .container {
         padding: 12px 10px 80px;
       }
+
+      /* Mobile Modals: strictly constrained within mobile screen bounds & touch scrollable */
+      .modal-overlay {
+        padding: 8px !important;
+        padding-top: max(8px, env(safe-area-inset-top)) !important;
+        padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+        padding-left: max(8px, env(safe-area-inset-left)) !important;
+        padding-right: max(8px, env(safe-area-inset-right)) !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      .modal-box {
+        padding: 16px 14px !important;
+        max-height: calc(100vh - 16px) !important;
+        max-height: calc(100dvh - 16px) !important;
+        max-width: 100% !important;
+        width: 100% !important;
+        border-radius: 14px !important;
+        margin: auto !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch !important;
+        box-sizing: border-box !important;
+      }
+    }
+
+    @media (max-height: 540px) {
+      .modal-overlay {
+        padding: 4px !important;
+        align-items: flex-start !important;
+      }
+      .modal-box {
+        padding: 12px 10px !important;
+        max-height: calc(100vh - 8px) !important;
+        max-height: calc(100dvh - 8px) !important;
+        margin: 4px auto !important;
+      }
     }
 
     /* Buttons (Minimum 44px touch targets) */
@@ -601,12 +638,16 @@
     .modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, 0.7);
+      background: rgba(15, 23, 42, 0.75);
       z-index: 80;
       display: none;
       align-items: center;
       justify-content: center;
       padding: 16px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
     }
     .modal-overlay.open {
       display: flex;
@@ -619,6 +660,27 @@
       width: 100%;
       padding: 22px;
       box-shadow: var(--shadow-lg);
+      box-sizing: border-box;
+      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      margin: auto;
+    }
+    .modal-box::-webkit-scrollbar {
+      width: 6px;
+    }
+    .modal-box::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .modal-box::-webkit-scrollbar-thumb {
+      background: var(--border-color);
+      border-radius: 999px;
+    }
+    .modal-box::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
     }
 
     /* Signature Canvas */
@@ -1158,7 +1220,7 @@
 
   <!-- 3. Full-Screen Decrypted Photo Lightbox Modal -->
   <div id="photo-lightbox-modal" class="modal-overlay" style="background:rgba(15, 23, 42, 0.94); z-index:95;">
-    <div style="max-width:820px; width:100%; display:flex; flex-direction:column; gap:12px; max-height:94vh;">
+    <div style="max-width:820px; width:100%; display:flex; flex-direction:column; gap:12px; max-height:calc(100vh - 20px); max-height:calc(100dvh - 20px); overflow-y:auto; -webkit-overflow-scrolling:touch; margin:auto; box-sizing:border-box;">
       <div style="display:flex; justify-content:space-between; align-items:center; color:#fff;">
         <div style="display:flex; align-items:center; gap:8px;">
           <span id="lightbox-category-badge" class="photo-badge-cat photo-badge-before" style="position:static;">BEFORE</span>
@@ -1167,8 +1229,8 @@
         <button onclick="closePhotoLightbox()" class="btn btn-secondary btn-icon" style="background:#1e293b; color:#fff; border:none; width:34px; height:34px;">✕</button>
       </div>
 
-      <div style="position:relative; width:100%; max-height:68vh; display:flex; align-items:center; justify-content:center; background:#000; border-radius:12px; overflow:hidden;">
-        <img id="lightbox-img" src="" alt="Decrypted Photo" style="max-width:100%; max-height:68vh; object-fit:contain;" />
+      <div style="position:relative; width:100%; max-height:68vh; max-height:68dvh; display:flex; align-items:center; justify-content:center; background:#000; border-radius:12px; overflow:hidden;">
+        <img id="lightbox-img" src="" alt="Decrypted Photo" style="max-width:100%; max-height:68vh; max-height:68dvh; object-fit:contain;" />
       </div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; color:#cbd5e1; font-size:0.8rem;">
@@ -1401,8 +1463,8 @@
 
       <div class="form-group">
         <label class="form-label" style="font-weight:700;">Customer Email Address</label>
-        <div style="display:flex; gap:8px;">
-          <input type="email" id="send-receipt-email" class="form-control" placeholder="customer@email.com" />
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input type="email" id="send-receipt-email" class="form-control" placeholder="customer@email.com" style="flex:1; min-width:180px;" />
           <button type="button" onclick="executeSendEmailReceipt()" class="btn btn-primary" style="white-space:nowrap; display:inline-flex; align-items:center; gap:6px;">
             📧 Email PDF (Attach)
           </button>
@@ -1414,8 +1476,8 @@
 
       <div class="form-group" style="margin-top:12px;">
         <label class="form-label" style="font-weight:700;">Customer Mobile Phone (SMS/MMS)</label>
-        <div style="display:flex; gap:8px;">
-          <input type="tel" id="send-receipt-phone" class="form-control" placeholder="(555) 000-0000" />
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input type="tel" id="send-receipt-phone" class="form-control" placeholder="(555) 000-0000" style="flex:1; min-width:180px;" />
           <button type="button" onclick="executeSendSmsReceipt()" class="btn btn-secondary" style="white-space:nowrap; display:inline-flex; align-items:center; gap:6px;">
             📱 Text PDF (Attach)
           </button>
@@ -1426,7 +1488,7 @@
       </div>
 
       <div style="border-top:1px solid var(--border-subtle); padding-top:14px; margin-top:16px; display:flex; flex-direction:column; gap:8px;">
-        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(90px, 1fr)); gap:8px;">
           <button type="button" onclick="executeDownloadPdfReceipt()" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; justify-content:center; gap:6px;">
             📥 Download PDF
           </button>
@@ -4132,6 +4194,9 @@
       `;
 
       modal.classList.add('open');
+      modal.scrollTop = 0;
+      const box = modal.querySelector('.modal-box');
+      if (box) box.scrollTop = 0;
     }
 
     function closeUserProfileModal() {
@@ -4231,6 +4296,9 @@
       const submitBtn = document.getElementById('photo-upload-submit-btn');
       if (submitBtn) submitBtn.disabled = false;
       modal.classList.add('open');
+      modal.scrollTop = 0;
+      const box = modal.querySelector('.modal-box');
+      if (box) box.scrollTop = 0;
     }
 
     function closePhotoUploadModal() {
@@ -4327,6 +4395,9 @@
       }
 
       modal.classList.add('open');
+      modal.scrollTop = 0;
+      const box = modal.querySelector('.modal-box');
+      if (box) box.scrollTop = 0;
     }
 
     function closePhotoLightbox() {
@@ -5353,6 +5424,9 @@
       }
 
       modal.classList.add('open');
+      modal.scrollTop = 0;
+      const box = modal.querySelector('.modal-box');
+      if (box) box.scrollTop = 0;
     }
 
     function openScrapLogModal(jobId) {
@@ -9194,6 +9268,9 @@ ${s.email ? 'Email: ' + s.email : ''}
       }
 
       modal.classList.add('open');
+      modal.scrollTop = 0;
+      const box = modal.querySelector('.modal-box');
+      if (box) box.scrollTop = 0;
     }
 
     function closeTeamMemberModal() {
@@ -9792,7 +9869,7 @@ ${s.email ? 'Email: ' + s.email : ''}
 
       // Register PWA Service Worker for Offline-First Capability & Home Screen Install
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js?v=14').catch((err) => {
+        navigator.serviceWorker.register('./sw.js?v=15').catch((err) => {
           console.warn('Service worker registration error:', err);
         });
       }
