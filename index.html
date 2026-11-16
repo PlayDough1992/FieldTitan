@@ -1564,6 +1564,7 @@
       jobs: [],        // Strictly empty []
       invoices: [],    // Strictly empty []
       payments: [],    // Strictly empty []
+      deletedPaymentIds: [], // Tombstones for deleted/voided payments
       scrapSales: [],  // Strictly empty [] (Sold Scrap & Material Recycling Income)
       users: [],       // Strictly empty [] (Admins & Technicians)
       companySync: {
@@ -1671,6 +1672,7 @@
           jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
           invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
           payments: Array.isArray(parsed.payments) ? parsed.payments : [],
+          deletedPaymentIds: Array.isArray(parsed.deletedPaymentIds) ? parsed.deletedPaymentIds : [],
           scrapSales: Array.isArray(parsed.scrapSales) ? parsed.scrapSales : [],
           users: Array.isArray(parsed.users) ? parsed.users : []
         };
@@ -2731,6 +2733,11 @@
     function mergeAppState(local, remote) {
       if (!remote || typeof remote !== 'object') return local;
 
+      const deletedPaySet = new Set([
+        ...(local.deletedPaymentIds || []),
+        ...(remote.deletedPaymentIds || [])
+      ]);
+
       const mergeById = (localArr = [], remoteArr = []) => {
         const map = new Map();
         (remoteArr || []).forEach(item => {
@@ -2747,10 +2754,6 @@
 
             let merged = (remoteTime > localTime) ? { ...localItem, ...remoteItem } : { ...remoteItem, ...localItem };
 
-            // Invoices: Status 'Paid' is sticky (once paid, keep paid)
-            if (remoteItem.status === 'Paid' || localItem.status === 'Paid') {
-              merged.status = 'Paid';
-            }
             // Signatures: Preserve signature if either has signed
             if (remoteItem.signature || localItem.signature) {
               merged.signature = remoteItem.signature || localItem.signature;
@@ -2792,6 +2795,29 @@
         return Array.from(map.values());
       };
 
+      const mergedPayments = mergeById(
+        (local.payments || []).filter(p => p && p.id && !deletedPaySet.has(p.id)),
+        (remote.payments || []).filter(p => p && p.id && !deletedPaySet.has(p.id))
+      );
+
+      const mergedInvoices = mergeById(local.invoices, remote.invoices).map(inv => {
+        const invPaid = mergedPayments
+          .filter(p => p && p.invoiceId === inv.id)
+          .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+        const fin = calcFinancials(inv.items, inv.taxRate, inv.discount);
+        let status = inv.status;
+        if (fin.total > 0) {
+          if (invPaid >= fin.total - 0.01) {
+            status = 'Paid';
+          } else if (invPaid > 0) {
+            status = 'Partial';
+          } else if (status === 'Paid') {
+            status = 'Sent';
+          }
+        }
+        return { ...inv, status };
+      });
+
       return {
         ...BLANK_STATE,
         ...remote,
@@ -2811,8 +2837,9 @@
         pricebook: mergeById(local.pricebook, remote.pricebook),
         estimates: mergeById(local.estimates, remote.estimates),
         jobs: mergeById(local.jobs, remote.jobs),
-        invoices: mergeById(local.invoices, remote.invoices),
-        payments: mergeById(local.payments, remote.payments),
+        invoices: mergedInvoices,
+        payments: mergedPayments,
+        deletedPaymentIds: Array.from(deletedPaySet),
         scrapSales: mergeById(local.scrapSales || [], remote.scrapSales || []),
         users: mergeById(local.users, remote.users)
       };
@@ -4831,7 +4858,7 @@
             <div class="card" onclick="openScrapHistoryModal()" style="cursor:pointer;" title="Click to view Payments & Scrap Sales History">
               <div style="font-size:0.72rem; font-weight:800; color:var(--text-muted); text-transform:uppercase;">Payments Collected</div>
               <div style="font-size:1.65rem; font-weight:900; color:var(--success); margin:4px 0;">${money(totalCollected)}</div>
-              <div style="font-size:0.75rem; color:var(--text-secondary);">${state.payments.length} inv payment${state.payments.length === 1 ? '' : 's'}${scrapRevenueTotal > 0 ? ` + ${money(scrapRevenueTotal)} scrap (${allScraps.length})` : ''}</div>
+              <div style="font-size:0.75rem; color:var(--text-secondary);">${state.payments.length > 0 ? `${state.payments.length} inv payment${state.payments.length === 1 ? '' : 's'}${scrapRevenueTotal > 0 ? ` + ${money(scrapRevenueTotal)} scrap (${allScraps.length})` : ''}` : (scrapRevenueTotal > 0 ? `${money(scrapRevenueTotal)} from ${allScraps.length} scrap sale${allScraps.length === 1 ? '' : 's'}` : 'No payments collected yet')}</div>
             </div>
           </div>
 
@@ -8031,6 +8058,7 @@ ${s.email ? 'Email: ' + s.email : ''}
     function openInvoiceDetail(invId) {
       const inv = state.invoices.find(i => i.id === invId);
       if (!inv) return;
+      const isAdmin = !currentUser || currentUser.role === 'admin';
       const cust = getCustomer(inv.customerId);
       const fin = calcFinancials(inv.items, inv.taxRate, inv.discount);
       const invPayments = state.payments.filter(p => p.invoiceId === inv.id);
@@ -8101,7 +8129,12 @@ ${s.email ? 'Email: ' + s.email : ''}
                       <div style="font-weight:800; font-size:0.875rem;">${esc(p.method)} ${p.cardBrand ? `(${esc(p.cardBrand)} ••${esc(p.last4)})` : ''} ${p.checkNumber ? `(Check #${esc(p.checkNumber)})` : ''}</div>
                       <div style="font-size:0.75rem; color:var(--text-muted);">${fmtDate(p.date)} ${p.authCode ? `• Auth: ${esc(p.authCode)}` : ''} ${p.memo ? `• ${esc(p.memo)}` : ''}</div>
                     </div>
-                    <div style="font-weight:900; color:var(--success);">${money(p.amount)}</div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                      <div style="font-weight:900; color:var(--success);">${money(p.amount)}</div>
+                      ${isAdmin ? `
+                        <button type="button" onclick="event.stopPropagation(); voidInvoicePayment('${p.id}', '${inv.id}')" class="btn btn-ghost btn-sm" style="color:var(--danger); padding:2px 6px; font-size:0.75rem;" title="Void / Delete Payment">✕</button>
+                      ` : ''}
+                    </div>
                   </div>
                 `).join('')}
               </div>
@@ -8357,6 +8390,84 @@ ${s.email ? 'Email: ' + s.email : ''}
       openInvoiceDetail(inv.id);
       renderCurrentView();
       triggerImmediateDatabaseSync(`Payment Recorded (+${money(amt)} on ${inv.number})`);
+    }
+
+    function voidInvoicePayment(paymentId, invoiceId) {
+      if (!confirmAction('Are you sure you want to void and remove this payment record? This will adjust the balance due on the invoice.')) return;
+      state.deletedPaymentIds = Array.isArray(state.deletedPaymentIds) ? state.deletedPaymentIds : [];
+      if (!state.deletedPaymentIds.includes(paymentId)) {
+        state.deletedPaymentIds.push(paymentId);
+      }
+      state.payments = (state.payments || []).filter(p => p.id !== paymentId);
+
+      const inv = (state.invoices || []).find(i => i.id === invoiceId);
+      if (inv) {
+        const fin = calcFinancials(inv.items, inv.taxRate, inv.discount);
+        const totalPaid = getInvoicePaidAmount(inv.id);
+        inv.status = totalPaid >= fin.total - 0.01 && fin.total > 0 ? 'Paid' : (totalPaid > 0 ? 'Partial' : 'Sent');
+        inv.updatedAt = new Date().toISOString();
+      }
+      saveAppState(true);
+      notify('Payment voided and removed.', 'success');
+      if (invoiceId) openInvoiceDetail(invoiceId);
+      renderCurrentView();
+      triggerImmediateDatabaseSync('Voided Invoice Payment');
+    }
+
+    function purgeTestInvoicePayments() {
+      state.deletedPaymentIds = Array.isArray(state.deletedPaymentIds) ? state.deletedPaymentIds : [];
+      const paymentIds = (state.payments || []).map(p => p.id).filter(Boolean);
+      paymentIds.forEach(id => {
+        if (!state.deletedPaymentIds.includes(id)) {
+          state.deletedPaymentIds.push(id);
+        }
+      });
+      const purgedCount = (state.payments || []).length;
+      state.payments = [];
+
+      // Re-evaluate invoice statuses based on remaining payments
+      (state.invoices || []).forEach(inv => {
+        const fin = calcFinancials(inv.items, inv.taxRate, inv.discount);
+        const paid = getInvoicePaidAmount(inv.id);
+        if (paid < fin.total - 0.01) {
+          inv.status = paid > 0 ? 'Partial' : (inv.status === 'Paid' ? 'Sent' : inv.status);
+          inv.updatedAt = new Date().toISOString();
+        }
+      });
+
+      saveAppState(true);
+      return purgedCount;
+    }
+
+    function confirmPurgeTestPayments() {
+      const payCount = (state.payments || []).length;
+      if (payCount === 0) {
+        notify('There are no invoice payments recorded. The ledger is already clean!', 'info');
+        return;
+      }
+      confirmDialog(
+        'Clear All Test Invoice Payments?',
+        `This will permanently remove ${payCount} test invoice payment record(s) and their dollar amounts from PAYMENTS COLLECTED, recalculate invoice balances, and sync with the encrypted cloud vault. Are you sure?`,
+        () => {
+          const purged = purgeTestInvoicePayments();
+          notify(`Purged ${purged} test invoice payment(s). PAYMENTS COLLECTED is now clean!`, 'success');
+          renderCurrentView();
+          triggerImmediateDatabaseSync('Purged All Test Invoice Payments');
+        }
+      );
+    }
+
+    function runTestPaymentsAutoPurge() {
+      const PURGE_FLAG = 'ft_purged_test_payments_v5';
+      if (!localStorage.getItem(PURGE_FLAG)) {
+        localStorage.setItem(PURGE_FLAG, 'true');
+        if (Array.isArray(state.payments) && state.payments.length > 0) {
+          const count = purgeTestInvoicePayments();
+          console.log(`[FieldTitan] Auto-purged ${count} test invoice payment(s) from local state.`);
+          renderCurrentView();
+          triggerImmediateDatabaseSync('Auto-Purged Test Invoice Payments');
+        }
+      }
     }
 
     function openInvoiceForm(invId = null, prefillCustomerId = '') {
@@ -8975,9 +9086,14 @@ ${s.email ? 'Email: ' + s.email : ''}
                 <div style="font-size:0.82rem;">
                   <strong>Database Cloud Inventory:</strong> ${state.invoices.length} Invoices (${state.payments.length} Payments, ${state.jobs.length} Jobs, ${state.customers.length} Customers)
                 </div>
-                <button type="button" onclick="pushDatabaseToGitHub(false, false, 'Force Push All Data to Cloud')" class="btn btn-primary btn-sm" style="display:inline-flex; align-items:center; gap:6px;">
-                  ⚡ Force Push All Invoices & Data to Cloud
-                </button>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                  <button type="button" onclick="confirmPurgeTestPayments()" class="btn btn-secondary btn-sm" style="color:var(--danger); border-color:#fca5a5;">
+                    🗑️ Clear Test Payments
+                  </button>
+                  <button type="button" onclick="pushDatabaseToGitHub(false, false, 'Force Push All Data to Cloud')" class="btn btn-primary btn-sm" style="display:inline-flex; align-items:center; gap:6px;">
+                    ⚡ Force Push All Invoices & Data to Cloud
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -9936,7 +10052,7 @@ ${s.email ? 'Email: ' + s.email : ''}
 
       // Register PWA Service Worker for Offline-First Capability & Home Screen Install
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js?v=16').catch((err) => {
+        navigator.serviceWorker.register('./sw.js?v=17').catch((err) => {
           console.warn('Service worker registration error:', err);
         });
       }
@@ -9956,10 +10072,20 @@ ${s.email ? 'Email: ' + s.email : ''}
         notify('FieldTitan installed to home screen! Launch from your home screen for fullscreen mode.', 'success');
       });
 
+      // Check and execute one-time purge of test invoice payments
+      runTestPaymentsAutoPurge();
+
       if (ghConfig.autoPull && isGhConfigured()) {
         await pullDatabaseFromGitHub(true);
         syncCurrentUserSession();
         migrateAndLinkJobAssignments();
+        // If remote DATA.json still had test payments before cloud sync, purge and sync clean state
+        if (!localStorage.getItem('ft_test_payments_cloud_synced') && (state.payments || []).length > 0) {
+          purgeTestInvoicePayments();
+          renderCurrentView();
+          await triggerImmediateDatabaseSync('Purged Test Invoice Payments from Cloud');
+          localStorage.setItem('ft_test_payments_cloud_synced', 'true');
+        }
       }
 
       // Start Real-Time Live Sync Engine (polls every 10s & auto-updates tech UI)
