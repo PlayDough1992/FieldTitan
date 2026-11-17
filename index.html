@@ -1962,6 +1962,7 @@
       invoices: [],    // Strictly empty []
       payments: [],    // Strictly empty []
       deletedPaymentIds: [], // Tombstones for deleted/voided payments
+      deletedEntityIds: [],  // Tombstones for permanently deleted records across all collections
       scrapSales: [],  // Strictly empty [] (Sold Scrap & Material Recycling Income)
       purchaseOrders: [], // Material Purchase Orders & Supply House Receipts
       timePunches: [], // Time Clock, Shift & Meal Break Punches
@@ -2128,6 +2129,7 @@
           invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
           payments: Array.isArray(parsed.payments) ? parsed.payments : [],
           deletedPaymentIds: Array.isArray(parsed.deletedPaymentIds) ? parsed.deletedPaymentIds : [],
+          deletedEntityIds: Array.isArray(parsed.deletedEntityIds) ? parsed.deletedEntityIds : [],
           scrapSales: Array.isArray(parsed.scrapSales) ? parsed.scrapSales : [],
           purchaseOrders: Array.isArray(parsed.purchaseOrders) ? parsed.purchaseOrders : [],
           timePunches: Array.isArray(parsed.timePunches) ? parsed.timePunches : [],
@@ -3096,11 +3098,17 @@
             }
             const parsedRaw = await decryptDatabasePayload(rawContent, ghConfig.encryptionKey.trim());
             if (parsedRaw && Array.isArray(parsedRaw.customers)) {
-              // Check if local has invoices or payments not in remote
+              // Check if local has invoices or payments not in remote (ignoring tombstoned records)
               const rawInvIds = new Set((parsedRaw.invoices || []).map(i => i.id));
               const rawPayIds = new Set((parsedRaw.payments || []).map(p => p.id));
-              const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !rawInvIds.has(i.id));
-              const hasUnpushedPayments = (state.payments || []).some(p => p.id && !rawPayIds.has(p.id));
+              const activeDelSet = new Set([
+                ...(state.deletedEntityIds || []),
+                ...(parsedRaw.deletedEntityIds || []),
+                ...(state.deletedPaymentIds || []),
+                ...(parsedRaw.deletedPaymentIds || [])
+              ]);
+              const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !rawInvIds.has(i.id) && !activeDelSet.has(i.id));
+              const hasUnpushedPayments = (state.payments || []).some(p => p.id && !rawPayIds.has(p.id) && !activeDelSet.has(p.id));
 
               state = mergeAppState(state, parsedRaw);
               ghSyncState.lastSyncedAt = new Date().toLocaleTimeString();
@@ -3150,11 +3158,17 @@
           throw new Error('Remote JSON file does not match FieldTitan database structure.');
         }
 
-        // Check if local has invoices or payments not in remote
+        // Check if local has invoices or payments not in remote (ignoring tombstoned records)
         const remoteInvIds = new Set((parsed.invoices || []).map(i => i.id));
         const remotePayIds = new Set((parsed.payments || []).map(p => p.id));
-        const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !remoteInvIds.has(i.id));
-        const hasUnpushedPayments = (state.payments || []).some(p => p.id && !remotePayIds.has(p.id));
+        const activeDelSet = new Set([
+          ...(state.deletedEntityIds || []),
+          ...(parsed.deletedEntityIds || []),
+          ...(state.deletedPaymentIds || []),
+          ...(parsed.deletedPaymentIds || [])
+        ]);
+        const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !remoteInvIds.has(i.id) && !activeDelSet.has(i.id));
+        const hasUnpushedPayments = (state.payments || []).some(p => p.id && !remotePayIds.has(p.id) && !activeDelSet.has(p.id));
 
         state = mergeAppState(state, parsed);
 
@@ -3190,7 +3204,9 @@
     function mergeAppState(local, remote) {
       if (!remote || typeof remote !== 'object') return local;
 
-      const deletedPaySet = new Set([
+      const deletedEntitySet = new Set([
+        ...(local.deletedEntityIds || []),
+        ...(remote.deletedEntityIds || []),
         ...(local.deletedPaymentIds || []),
         ...(remote.deletedPaymentIds || [])
       ]);
@@ -3198,10 +3214,12 @@
       const mergeById = (localArr = [], remoteArr = []) => {
         const map = new Map();
         (remoteArr || []).forEach(item => {
-          if (item && item.id) map.set(item.id, { ...item });
+          if (item && item.id && !deletedEntitySet.has(item.id)) {
+            map.set(item.id, { ...item });
+          }
         });
         (localArr || []).forEach(localItem => {
-          if (!localItem || !localItem.id) return;
+          if (!localItem || !localItem.id || deletedEntitySet.has(localItem.id)) return;
           const remoteItem = map.get(localItem.id);
           if (!remoteItem) {
             map.set(localItem.id, { ...localItem });
@@ -3231,8 +3249,12 @@
             }
             if (Array.isArray(localItem.scrapLogs) || Array.isArray(remoteItem.scrapLogs)) {
               const scrapMap = new Map();
-              (remoteItem.scrapLogs || []).forEach(s => scrapMap.set(s.id, s));
-              (localItem.scrapLogs || []).forEach(s => scrapMap.set(s.id, s));
+              (remoteItem.scrapLogs || []).forEach(s => {
+                if (s && s.id && !deletedEntitySet.has(s.id)) scrapMap.set(s.id, s);
+              });
+              (localItem.scrapLogs || []).forEach(s => {
+                if (s && s.id && !deletedEntitySet.has(s.id)) scrapMap.set(s.id, s);
+              });
               merged.scrapLogs = Array.from(scrapMap.values());
             }
             if (Array.isArray(localItem.checklist) || Array.isArray(remoteItem.checklist)) {
@@ -3249,15 +3271,16 @@
             map.set(localItem.id, merged);
           }
         });
-        return Array.from(map.values());
+        return Array.from(map.values()).filter(x => x && x.id && !deletedEntitySet.has(x.id));
       };
 
-      const mergedPayments = mergeById(
-        (local.payments || []).filter(p => p && p.id && !deletedPaySet.has(p.id)),
-        (remote.payments || []).filter(p => p && p.id && !deletedPaySet.has(p.id))
+      const mergedPayments = mergeById(local.payments, remote.payments).filter(p =>
+        p && p.id && !deletedEntitySet.has(p.id) && (!p.invoiceId || !deletedEntitySet.has(p.invoiceId))
       );
 
-      const mergedInvoices = mergeById(local.invoices, remote.invoices).map(inv => {
+      const mergedInvoices = mergeById(local.invoices, remote.invoices).filter(inv =>
+        inv && inv.id && !deletedEntitySet.has(inv.id)
+      ).map(inv => {
         const invPaid = mergedPayments
           .filter(p => p && p.invoiceId === inv.id)
           .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
@@ -3296,7 +3319,8 @@
         jobs: mergeById(local.jobs, remote.jobs),
         invoices: mergedInvoices,
         payments: mergedPayments,
-        deletedPaymentIds: Array.from(deletedPaySet),
+        deletedPaymentIds: Array.from(new Set([...(local.deletedPaymentIds || []), ...(remote.deletedPaymentIds || [])])),
+        deletedEntityIds: Array.from(deletedEntitySet),
         scrapSales: mergeById(local.scrapSales || [], remote.scrapSales || []),
         purchaseOrders: mergeById(local.purchaseOrders || [], remote.purchaseOrders || []),
         timePunches: mergeById(local.timePunches || [], remote.timePunches || []),
@@ -3393,6 +3417,25 @@
         } else {
           const errJson = await headRes.json().catch(() => ({}));
           throw new Error(`HTTP ${headRes.status}: ${errJson.message || headRes.statusText}`);
+        }
+
+        // Ensure state is completely sanitized of any tombstoned/deleted entities before encrypting & committing
+        const activeDeletedSet = new Set([
+          ...(state.deletedEntityIds || []),
+          ...(state.deletedPaymentIds || [])
+        ]);
+        if (activeDeletedSet.size > 0) {
+          state.customers = (state.customers || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.equipment = (state.equipment || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.pricebook = (state.pricebook || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.estimates = (state.estimates || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.jobs = (state.jobs || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.invoices = (state.invoices || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.payments = (state.payments || []).filter(x => x && x.id && !activeDeletedSet.has(x.id) && (!x.invoiceId || !activeDeletedSet.has(x.invoiceId)));
+          state.scrapSales = (state.scrapSales || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.purchaseOrders = (state.purchaseOrders || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.timePunches = (state.timePunches || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
+          state.users = (state.users || []).filter(x => x && x.id && !activeDeletedSet.has(x.id));
         }
 
         // Encrypt the entire state payload with AES-256-GCM before sending
@@ -3598,11 +3641,17 @@
     function applyRemoteStateUpdate(parsed, remoteSha) {
       if (!parsed || typeof parsed !== 'object') return;
 
-      // Detect if local state has invoices or payments not yet in remote
+      // Detect if local state has invoices or payments not yet in remote (ignoring tombstoned records)
       const remoteInvIds = new Set((parsed.invoices || []).map(i => i.id));
       const remotePayIds = new Set((parsed.payments || []).map(p => p.id));
-      const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !remoteInvIds.has(i.id));
-      const hasUnpushedPayments = (state.payments || []).some(p => p.id && !remotePayIds.has(p.id));
+      const activeDelSet = new Set([
+        ...(state.deletedEntityIds || []),
+        ...(parsed.deletedEntityIds || []),
+        ...(state.deletedPaymentIds || []),
+        ...(parsed.deletedPaymentIds || [])
+      ]);
+      const hasUnpushedInvoices = (state.invoices || []).some(i => i.id && !remoteInvIds.has(i.id) && !activeDelSet.has(i.id));
+      const hasUnpushedPayments = (state.payments || []).some(p => p.id && !remotePayIds.has(p.id) && !activeDelSet.has(p.id));
 
       const merged = mergeAppState(state, parsed);
       const serializedOld = JSON.stringify(state);
@@ -6219,7 +6268,9 @@
     }
 
     function deleteScrapSale(scrapId) {
-      if (!confirmAction('Are you sure you want to permanently delete this scrap sale entry?')) return;
+      if (!confirmAction('Are you sure you want to permanently delete this scrap sale entry from the database?')) return;
+      state.deletedEntityIds = Array.isArray(state.deletedEntityIds) ? state.deletedEntityIds : [];
+      if (!state.deletedEntityIds.includes(scrapId)) state.deletedEntityIds.push(scrapId);
       state.scrapSales = (state.scrapSales || []).filter(s => s.id !== scrapId);
       (state.jobs || []).forEach(j => {
         if (j.scrapLogs) {
@@ -6227,10 +6278,10 @@
         }
       });
       saveAppState();
-      notify('Scrap sale entry removed');
+      notify('Scrap sale entry removed from database');
       renderCurrentView();
       renderScrapHistoryModalContent();
-      triggerImmediateDatabaseSync('Delete Scrap Sale Entry');
+      triggerImmediateDatabaseSync('Delete Scrap Sale Entry from Database');
     }
 
     function deleteScrapLog(jobId, scrapId) {
@@ -6718,7 +6769,9 @@
         notify('Only administrators can delete purchase orders.', 'error');
         return;
       }
-      if (!confirmAction('Are you sure you want to permanently delete this Material P.O.?')) return;
+      if (!confirmAction('Are you sure you want to permanently delete this Material P.O. from the database?')) return;
+      state.deletedEntityIds = Array.isArray(state.deletedEntityIds) ? state.deletedEntityIds : [];
+      if (!state.deletedEntityIds.includes(poId)) state.deletedEntityIds.push(poId);
       state.purchaseOrders = (state.purchaseOrders || []).filter(p => p.id !== poId);
       (state.jobs || []).forEach(j => {
         if (j.purchaseOrders) {
@@ -6726,10 +6779,10 @@
         }
       });
       saveAppState();
-      notify('Purchase order removed');
+      notify('Purchase order permanently removed from database');
       renderCurrentView();
       renderPurchaseOrdersModalContent();
-      triggerImmediateDatabaseSync('Delete Purchase Order');
+      triggerImmediateDatabaseSync('Delete Purchase Order from Database');
     }
 
     function openPoReceiptLightbox(jobId, poId) {
@@ -7273,13 +7326,15 @@
     function deleteCurrentTimePunch() {
       const punchId = document.getElementById('tp-punch-id').value;
       if (!punchId) return;
-      if (!confirmAction('Are you sure you want to delete this punch record?')) return;
+      if (!confirmAction('Are you sure you want to delete this punch record from the database?')) return;
+      state.deletedEntityIds = Array.isArray(state.deletedEntityIds) ? state.deletedEntityIds : [];
+      if (!state.deletedEntityIds.includes(punchId)) state.deletedEntityIds.push(punchId);
       state.timePunches = (state.timePunches || []).filter(p => p.id !== punchId);
       saveAppState();
       closeTimePunchModal();
-      notify('Time punch deleted.');
+      notify('Time punch deleted from database.');
       renderCurrentView();
-      triggerImmediateDatabaseSync('Delete Time Punch');
+      triggerImmediateDatabaseSync('Delete Time Punch from Database');
     }
 
     function exportTimecardsCsv() {
@@ -9624,9 +9679,14 @@ ${s.email ? 'Email: ' + s.email : ''}
 
       return `
         <div style="display:flex; flex-direction:column; gap:14px;">
-          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
             <input type="search" class="form-control" style="flex:1; min-width:220px;" value="${esc(searchText)}" oninput="searchText=this.value; renderCurrentView()" placeholder="Search invoice # or customer..." />
             <button onclick="openInvoiceForm()" class="btn btn-primary">+ Create Invoice</button>
+            ${(!currentUser || currentUser.role === 'admin') && (state.invoices || []).length > 0 ? `
+              <button onclick="confirmPurgeAllInvoices()" class="btn btn-ghost" style="color:var(--danger); border:1px solid rgba(239,68,68,0.35); font-size:0.8rem; font-weight:700; padding:8px 12px; border-radius:8px;">
+                🗑️ Delete All Invoices (${state.invoices.length})
+              </button>
+            ` : ''}
           </div>
 
           <div class="pill-row">
@@ -9770,7 +9830,7 @@ ${s.email ? 'Email: ' + s.email : ''}
       `;
 
       const footer = `
-        <button onclick="deleteEntity('invoices', '${inv.id}')" class="btn btn-ghost" style="color:var(--danger); margin-right:auto;">Delete</button>
+        <button onclick="deleteEntity('invoices', '${inv.id}')" class="btn btn-ghost" style="color:var(--danger); margin-right:auto;">🗑️ Delete Invoice</button>
         <button onclick="openSendReceiptModal('invoice', '${inv.id}')" class="btn btn-primary">🧾 Send PDF Receipt</button>
         <button onclick="printRecord('invoice', '${inv.id}')" class="btn btn-secondary">🖨️ Print</button>
         <button onclick="openInvoiceForm('${inv.id}')" class="btn btn-secondary">Edit</button>
@@ -10098,6 +10158,54 @@ ${s.email ? 'Email: ' + s.email : ''}
           triggerImmediateDatabaseSync('Auto-Purged Test Invoice Payments');
         }
       }
+    }
+
+    function purgeAllTestInvoices() {
+      const invIds = (state.invoices || []).map(i => i.id).filter(Boolean);
+      state.deletedEntityIds = Array.isArray(state.deletedEntityIds) ? state.deletedEntityIds : [];
+      state.deletedPaymentIds = Array.isArray(state.deletedPaymentIds) ? state.deletedPaymentIds : [];
+
+      invIds.forEach(id => {
+        if (!state.deletedEntityIds.includes(id)) state.deletedEntityIds.push(id);
+      });
+
+      const payIds = (state.payments || []).map(p => p.id).filter(Boolean);
+      payIds.forEach(id => {
+        if (!state.deletedPaymentIds.includes(id)) state.deletedPaymentIds.push(id);
+        if (!state.deletedEntityIds.includes(id)) state.deletedEntityIds.push(id);
+      });
+
+      const count = (state.invoices || []).length;
+      state.invoices = [];
+      state.payments = [];
+
+      (state.jobs || []).forEach(j => {
+        if (j.invoiceId) {
+          delete j.invoiceId;
+          if (j.status === 'Invoiced') j.status = 'Completed';
+        }
+      });
+
+      saveAppState(true);
+      return count;
+    }
+
+    function confirmPurgeAllInvoices() {
+      const invCount = (state.invoices || []).length;
+      if (invCount === 0) {
+        notify('There are no invoices recorded. The database is already clean!', 'info');
+        return;
+      }
+      confirmDialog(
+        'Delete All Invoices from Database?',
+        `This will permanently delete all ${invCount} invoice(s) and their associated payment records from both this device and the cloud database, resetting PAYMENTS COLLECTED to only verified scrap sales. Are you sure?`,
+        async () => {
+          const purged = purgeAllTestInvoices();
+          notify(`Permanently deleted ${purged} invoice(s) and payments from database!`, 'success');
+          renderCurrentView();
+          await triggerImmediateDatabaseSync('Purged All Invoices and Payments from Database');
+        }
+      );
     }
 
     function openInvoiceForm(invId = null, prefillCustomerId = '') {
@@ -10780,6 +10888,9 @@ ${s.email ? 'Email: ' + s.email : ''}
                   <button type="button" onclick="confirmPurgeTestPayments()" class="btn btn-secondary btn-sm" style="color:var(--danger); border-color:#fca5a5;">
                     🗑️ Clear Test Payments
                   </button>
+                  <button type="button" onclick="confirmPurgeAllInvoices()" class="btn btn-secondary btn-sm" style="color:var(--danger); border-color:#fca5a5;">
+                    🗑️ Delete All Invoices & Payments (${state.invoices.length})
+                  </button>
                   <button type="button" onclick="pushDatabaseToGitHub(false, false, 'Force Push All Data to Cloud')" class="btn btn-primary btn-sm" style="display:inline-flex; align-items:center; gap:6px;">
                     ⚡ Force Push All Invoices & Data to Cloud
                   </button>
@@ -11428,13 +11539,15 @@ ${s.email ? 'Email: ' + s.email : ''}
     function deleteTeamUser(userId) {
       confirmDialog(
         'Delete Team Member',
-        'Are you sure you want to permanently delete this team member? Their access will be revoked immediately.',
+        'Are you sure you want to permanently delete this team member from the database? Their access will be revoked immediately.',
         () => {
+          state.deletedEntityIds = Array.isArray(state.deletedEntityIds) ? state.deletedEntityIds : [];
+          if (!state.deletedEntityIds.includes(userId)) state.deletedEntityIds.push(userId);
           state.users = (state.users || []).filter(u => u.id !== userId);
           saveAppState();
-          notify('Team member removed.');
+          notify('Team member removed from database.');
           renderCurrentView();
-          triggerImmediateDatabaseSync('Team Member Removed');
+          triggerImmediateDatabaseSync('Team Member Removed from Database');
         }
       );
     }
@@ -11676,6 +11789,7 @@ ${s.email ? 'Email: ' + s.email : ''}
     }
 
     function deleteEntity(collection, id) {
+      if (!id) return;
       if (collection === 'jobs' && !hasPermission('canDeleteJobs') && currentUser?.role !== 'admin') {
         notify('Permission denied: You do not have permission to delete work orders. Contact dispatch.', 'error');
         return;
@@ -11688,13 +11802,57 @@ ${s.email ? 'Email: ' + s.email : ''}
         notify('Permission denied: You do not have permission to delete pricebook items.', 'error');
         return;
       }
-      confirmDialog('Delete Record?', 'Are you sure you want to delete this record?', () => {
-        state[collection] = state[collection].filter(x => x.id !== id);
+      if (collection === 'invoices' && !hasPermission('canCreateInvoices') && currentUser?.role !== 'admin') {
+        notify('Permission denied: You do not have permission to delete invoices.', 'error');
+        return;
+      }
+      confirmDialog('Delete Record from Database?', 'Are you sure you want to permanently delete this record from the database?', async () => {
+        // Record permanent tombstone so this entity is never resurrected across sync
+        state.deletedEntityIds = Array.isArray(state.deletedEntityIds) ? state.deletedEntityIds : [];
+        if (!state.deletedEntityIds.includes(id)) {
+          state.deletedEntityIds.push(id);
+        }
+
+        // If deleting an invoice, also delete and tombstone all payments linked to this invoice
+        if (collection === 'invoices') {
+          state.deletedPaymentIds = Array.isArray(state.deletedPaymentIds) ? state.deletedPaymentIds : [];
+          const linkedPayments = (state.payments || []).filter(p => p && p.invoiceId === id);
+          linkedPayments.forEach(p => {
+            if (p.id) {
+              if (!state.deletedPaymentIds.includes(p.id)) state.deletedPaymentIds.push(p.id);
+              if (!state.deletedEntityIds.includes(p.id)) state.deletedEntityIds.push(p.id);
+            }
+          });
+          state.payments = (state.payments || []).filter(p => p && p.invoiceId !== id);
+
+          // Clear invoice link on any associated jobs
+          (state.jobs || []).forEach(j => {
+            if (j && j.invoiceId === id) {
+              delete j.invoiceId;
+              if (j.status === 'Invoiced') j.status = 'Completed';
+            }
+          });
+        }
+
+        // If deleting a job, detach references
+        if (collection === 'jobs') {
+          (state.scrapSales || []).forEach(s => {
+            if (s && s.jobId === id) s.jobId = null;
+          });
+          (state.purchaseOrders || []).forEach(p => {
+            if (p && p.jobId === id) p.jobId = null;
+          });
+        }
+
+        if (Array.isArray(state[collection])) {
+          state[collection] = state[collection].filter(x => x && x.id !== id);
+        }
+
         saveAppState();
         closeDrawer();
-        notify('Deleted');
+        notify('Record permanently deleted from database');
         renderCurrentView();
-        triggerImmediateDatabaseSync(`Deleted ${collection.slice(0, -1)} Record`);
+        await triggerImmediateDatabaseSync(`Deleted ${collection.slice(0, -1)} Record from Database`);
       });
     }
 
@@ -11920,7 +12078,7 @@ ${s.email ? 'Email: ' + s.email : ''}
 
       // Register PWA Service Worker for Offline-First Capability & Home Screen Install
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js?v=18').catch((err) => {
+        navigator.serviceWorker.register('./sw.js?v=19').catch((err) => {
           console.warn('Service worker registration error:', err);
         });
       }
@@ -11943,6 +12101,18 @@ ${s.email ? 'Email: ' + s.email : ''}
       // Check and execute one-time purge of test invoice payments
       runTestPaymentsAutoPurge();
 
+      // Check and execute one-time purge of test invoices
+      const INVOICE_PURGE_FLAG = 'ft_purged_test_invoices_v7';
+      if (!localStorage.getItem(INVOICE_PURGE_FLAG)) {
+        localStorage.setItem(INVOICE_PURGE_FLAG, 'true');
+        if (Array.isArray(state.invoices) && state.invoices.length > 0) {
+          const count = purgeAllTestInvoices();
+          console.log(`[FieldTitan] Auto-purged ${count} test invoices and registered database tombstones.`);
+          renderCurrentView();
+          triggerImmediateDatabaseSync('Auto-Purged Test Invoices from Database');
+        }
+      }
+
       if (ghConfig.autoPull && isGhConfigured()) {
         await pullDatabaseFromGitHub(true);
         syncCurrentUserSession();
@@ -11953,6 +12123,13 @@ ${s.email ? 'Email: ' + s.email : ''}
           renderCurrentView();
           await triggerImmediateDatabaseSync('Purged Test Invoice Payments from Cloud');
           localStorage.setItem('ft_test_payments_cloud_synced', 'true');
+        }
+        // If remote DATA.json still had test invoices before cloud sync, purge and sync clean state
+        if (!localStorage.getItem('ft_test_invoices_cloud_synced') && (state.invoices || []).length > 0) {
+          purgeAllTestInvoices();
+          renderCurrentView();
+          await triggerImmediateDatabaseSync('Purged Test Invoices from Cloud Database');
+          localStorage.setItem('ft_test_invoices_cloud_synced', 'true');
         }
       }
 
